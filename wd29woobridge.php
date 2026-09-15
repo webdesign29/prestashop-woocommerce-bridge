@@ -13,7 +13,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.1.3';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.1.4';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '8.99.99'];
         parent::__construct();
@@ -26,6 +26,7 @@ class Wd29woobridge extends Module
             $adapter = new \WD29\Bridge\PrestaAdapter();
             $this->bridgeEngine = new \WD29\Bridge\Engine($adapter); $adapter->engine = $this->bridgeEngine;
         }
+        if (Configuration::get('WD29_BRIDGE_SCHEMA') !== '4') { $this->bridgeEngine->install(); Configuration::updateValue('WD29_BRIDGE_SCHEMA','4'); }
         return $this->bridgeEngine;
     }
     public function install()
@@ -118,6 +119,7 @@ class Wd29woobridge extends Module
                 elseif ($action === 'tick') { $engine->tick(false); $message = 'Queue processed; inspect results below.'; }
                 elseif ($action === 'retry') { $engine->retry(); $message = 'Failed events queued again.'; }
                 elseif ($action === 'resolve_catalog') { $engine->retryCatalogConflicts(); $message = 'Catalog conflicts queued with the selected priority.'; }
+                elseif ($action === 'seed_customers') { $message = 'Contacts captured: ' . $engine->seed('customer', max(0, (int) Tools::getValue('offset'))); }
                 elseif ($action === 'seed') { $message = 'Products captured: ' . $engine->seed('product', max(0, (int) Tools::getValue('offset'))); }
             } catch (Throwable $error) { $message = $error->getMessage(); }
         }
@@ -137,7 +139,7 @@ class Wd29woobridge extends Module
         $html .= '<label>Tax rate → tax rules group ID, JSON (example: {&quot;20&quot;:1})</label><input name="tax_rules" value="'.$this->escape(json_encode($config['tax_rules'] ?? new stdClass())).'">';
         $html .= '<button class="btn btn-primary" name="bridge_action" value="save">Save settings</button></form><hr>';
         $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '"><label>Batch offset</label><input name="offset" type="number" min="0" value="0">';
-        foreach (['health' => 'Test connection','seed' => 'Capture catalog','tick' => 'Process queue','retry' => 'Retry failures','resolve_catalog'=>'Retry catalog conflicts'] as $action => $label) { $html .= '<button class="btn btn-default" name="bridge_action" value="' . $action . '">' . $label . '</button> '; }
+        foreach (['health' => 'Test connection','seed' => 'Capture catalog', 'seed_customers'=>'Capture customer contacts','tick' => 'Process queue','retry' => 'Retry failures','resolve_catalog'=>'Retry catalog conflicts'] as $action => $label) { $html .= '<button class="btn btn-default" name="bridge_action" value="' . $action . '">' . $label . '</button> '; }
         $html .= '</form><p>' . $this->escape(Configuration::get('WD29_BRIDGE_NOTICE')) . '</p><h3>Latest events</h3><table class="table"><thead><tr>';
         foreach (['seq','direction','kind','record_key','state','attempts','error','created_at'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
         $html .= '</tr></thead><tbody>';
@@ -146,6 +148,14 @@ class Wd29woobridge extends Module
         foreach (['source','local_id','name','brands','tags','type','regular','sale','tax','basis','initial_stock_snapshot'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->catalogAudit() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
+        $html .= '</tbody></table><h3>Order reconciliation</h3><p>Unlinked historical lines retain source details and receive catalog links once products are available.</p><table class="table"><thead><tr>';
+        foreach (['source','local_id','total','currency','status','lines','unlinked_lines'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
+        $html .= '</tr></thead><tbody>';
+        foreach ($engine->orderReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
+        $html .= '</tbody></table><h3>Customer contact directory</h3><p>Read-only contact copies edited on their source store. No login accounts, passwords or marketing consents copied. No automatic identity merge by email. Up to 200 contacts.</p><table class="table"><thead><tr>';
+        foreach (['source','name','email','phone','company','billing','type'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
+        $html .= '</tr></thead><tbody>';
+        foreach ($engine->customerReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
         return $html . '</tbody></table></div>';
     }
 }

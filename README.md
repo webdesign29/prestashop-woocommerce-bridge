@@ -31,7 +31,7 @@ Des prix dont la TVA est désactivée côté WooCommerce restent marqués « pri
 2. Définir une même clé aléatoire d’au moins 32 caractères sur les deux sites. La conserver uniquement dans les configurations privées des boutiques. Ne jamais la publier dans GitHub, un ticket ou un journal.
 3. Copier l’URL de webhook de chaque boutique dans la configuration de l’autre. Passer les deux en **audit** et utiliser « Test connection ».
 4. Confirmer les correspondances fiscales et la priorité en cas de conflit. Les deux boutiques doivent utiliser la même priorité.
-5. Capturer les deux catalogues par lots, puis les commandes si leur historique doit être repris. Les commandes en attente d’un produit sont reprises après celui-ci.
+5. Capturer les deux catalogues par lots, puis les commandes si leur historique doit être repris. Les commandes conservent les lignes historiques même lorsque leur produit est indisponible ; le lien au catalogue est réparé dès que le produit est synchronisé.
 6. Examiner les erreurs et les quantités non suivies, puis activer **live** sur les deux sites seulement après recette. Le mode audit reçoit les événements mais ne modifie pas les fiches, stocks et commandes à partir des événements entrants.
 7. Configurer un vrai cron WordPress, idéalement chaque minute. WP-Cron dépend autrement des visites. WooCommerce déclenche aussi le traitement du module PrestaShop, y compris lorsque sa vitrine est en maintenance ; seul le point de réception signé bénéficie de cette exception.
 8. Vérifier une création, une modification, une déclinaison, une vente, une annulation et la répétition du même webhook. Vérifier aussi la caisse réelle si KerAwen est utilisé.
@@ -65,3 +65,13 @@ PrestaShop partage une politique de commande hors stock pour toutes les déclina
 Les marques WooCommerce sont reliées au fabricant PrestaShop (une marque maximum), et les étiquettes sont synchronisées dans la langue par défaut. Les champs absents des anciens événements ne suppriment pas ces valeurs. Les groupes ACF, les métadonnées privées des extensions, les champs de caisse KerAwen et les modèles SEO ne sont pas copiés automatiquement : ils demandent une correspondance explicite et une recette.
 
 Une remise globale PrestaShop déclarée, dont le montant explique exactement l’écart du total, est conservée dans la commande miroir WooCommerce sous une ligne négative « Source order discount ». Les autres écarts restent bloqués.
+
+### Commandes et répertoire clients (0.1.4)
+
+Les commandes sont indépendantes de la disponibilité du catalogue. Une ligne sans produit local conserve son nom, sa quantité, ses montants et sa référence d’origine ; son lien est réparé ultérieurement sans modifier les montants ni le stock. Le tableau « Order reconciliation » affiche les totaux natifs, statuts et lignes encore sans lien.
+
+Le « Customer contact directory » est un répertoire privé de copies de coordonnées, disponible dans la configuration du connecteur aux administrateurs autorisés. Les profils clients et contacts invités des commandes sont transmis dans les deux sens avec les webhooks signés et la déduplication. La copie s’actualise quand la fiche d’origine change, via le contrôle périodique. Les administrateurs modifient les coordonnées sur leur boutique d’origine. Les identités sont conservées par source et identifiant ; les emails ne fusionnent jamais automatiquement deux fiches. Les noms, email, téléphone, société et adresses de facturation/livraison sont transmis.
+
+Ce répertoire ne crée ni ne fusionne de comptes de connexion WordPress ou PrestaShop : les comptes existants, mots de passe, rôles, tokens de paiement et consentements marketing ne sont pas transférés. Les adresses historiques des commandes restent leurs instantanés. La synchronisation des suppressions et de tout le carnet d’adresses demande un traitement explicite ; seuls les profils présents et les contacts des commandes sont parcourus. Les répertoires et leurs données restent dans les bases privées des boutiques et ne doivent jamais être publiés dans le dépôt.
+
+La mise à jour ajoute automatiquement une table privée de contacts et conserve les configurations, correspondances et historiques existants. Installer les deux versions avant de reprendre les échanges.

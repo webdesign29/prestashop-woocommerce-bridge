@@ -1,3 +1,10 @@
+# 0.1.4
+
+- Import historical order lines independently of catalog availability; attach later without changing stock or totals.
+- Add native order reconciliation totals and a private source-owned customer contact directory.
+- Synchronize customer/guest contact snapshots with signed, deduplicated events; do not create login accounts or copy credentials/consents.
+- Add automatic contact-table migration and customer capture controls.
+
 # 0.1.3
 
 - Synchronize native product brands/manufacturers and tags; show them in the catalog audit.

@@ -24,6 +24,7 @@ final class Engine
     public function install(): void
     {
         foreach ([
+            'contacts' => 'id bigint unsigned NOT NULL AUTO_INCREMENT, record_key varchar(96) NOT NULL, data longtext NOT NULL, PRIMARY KEY(id), UNIQUE KEY origin(record_key)',
             'map' => 'record_key varchar(96) NOT NULL, kind varchar(16) NOT NULL, local_id bigint unsigned NOT NULL, fingerprint varchar(64) NOT NULL DEFAULT \'\', local_hash varchar(64) NOT NULL DEFAULT \'\', quantity bigint NULL, stock_initialized tinyint NOT NULL DEFAULT 0, snapshot longtext NULL, PRIMARY KEY(record_key), UNIQUE KEY native_record(kind,local_id)',
             'queue' => 'seq bigint unsigned NOT NULL AUTO_INCREMENT, event_id char(32) NOT NULL, direction varchar(8) NOT NULL, kind varchar(16) NOT NULL, record_key varchar(96) NOT NULL, payload longtext NOT NULL, state varchar(16) NOT NULL DEFAULT \'pending\', attempts int NOT NULL DEFAULT 0, next_try bigint NOT NULL DEFAULT 0, error varchar(255) NOT NULL DEFAULT \'\', created_at datetime NOT NULL, PRIMARY KEY(seq), UNIQUE KEY event_direction(event_id,direction), KEY pending_queue(direction,state,next_try)',
         ] as $name => $fields) {
@@ -63,7 +64,7 @@ final class Engine
     public function bind(string $key, string $kind, int $id): void
     {
         Protocol::validateKey($key);
-        if (!in_array($kind, ['product', 'variant', 'order'], true) || $id < 1) { throw new \RuntimeException('Invalid mapping.'); }
+        if (!in_array($kind, ['product', 'variant', 'order', 'customer'], true) || $id < 1) { throw new \RuntimeException('Invalid mapping.'); }
         $existing = $this->mapping($key);
         if ($existing && ((int) $existing['local_id'] !== $id || $existing['kind'] !== $kind)) {
             throw new \RuntimeException('A source record is already mapped to another native record.');
@@ -88,7 +89,7 @@ final class Engine
             $locked = (int) ($this->sql('SELECT GET_LOCK(?,5) AS acquired', [$lock])[0]['acquired'] ?? 0) === 1;
             if (!$locked) { throw new \RuntimeException('Record capture is busy.'); }
             $this->sql('START TRANSACTION');
-            $data = $kind === 'product' ? $this->adapter->product($id) : $this->adapter->order($id);
+            $data = $kind === 'customer' ? $this->customer($id) : ($kind === 'product' ? $this->adapter->product($id) : $this->adapter->order($id));
             $key = $data['key'];
             $row = $this->mapping($key);
             $hash = $kind === 'product' ? self::catalogHash($data) : Protocol::fingerprint($data);
@@ -140,7 +141,7 @@ final class Engine
     {
         Protocol::validateKey($key);
         $id = $id ?? bin2hex(random_bytes(16));
-        if (!preg_match('/^[a-f0-9]{32}$/D', $id) || !in_array($kind, ['product', 'stock', 'order'], true)) {
+        if (!preg_match('/^[a-f0-9]{32}$/D', $id) || !in_array($kind, ['product', 'stock', 'order', 'customer'], true)) {
             throw new \RuntimeException('Invalid event envelope.');
         }
         $this->sql('INSERT IGNORE INTO {b}queue (event_id,direction,kind,record_key,payload,created_at) VALUES (?,?,?,?,?,?)',
@@ -167,7 +168,7 @@ final class Engine
         if ($op === 'tick') { $this->tick(false); return ['ok' => true]; }
         if ($op === 'seed') {
             $offset = max(0, (int) ($message['offset'] ?? 0));
-            $kind = ($message['kind'] ?? '') === 'order' ? 'order' : 'product';
+            $kind = in_array($message['kind']??'', ['order','customer'],true) ? $message['kind'] : 'product';
             return ['ok' => true, 'count' => $this->seed($kind, $offset)];
         }
         throw new \RuntimeException('Unknown operation.');
@@ -176,7 +177,11 @@ final class Engine
     public function seed(string $kind, int $offset = 0): int
     {
         $ids = $this->adapter->ids($kind, $offset, 10);
-        foreach ($ids as $id) { $this->capture($kind, (int) $id); }
+        foreach ($ids as $id) {
+            if ($kind==='order' && ($this->config()['mode']??'')==='live') { $this->adapter->reconcileOrderLinks((int)$id); }
+            $this->capture($kind, (int) $id);
+            if ($kind==='order') { $key=$this->adapter->orderContact((int)$id); if ($key) { $this->capture('customer',$this->contactId($key)); } }
+        }
         return count($ids);
     }
 
@@ -194,7 +199,7 @@ final class Engine
         if ((int) ($row['acquired'] ?? 0) !== 1) { return; }
         try {
             // Reconcile bounded pages as well as hooks: recovers missed callbacks and scheduled prices.
-            foreach (['product','order'] as $kind) {
+            foreach (['product','order','customer'] as $kind) {
                 $offset=$this->adapter->scanOffset($kind);
                 $count=$this->seed($kind,$offset);
                 $this->adapter->saveScanOffset($kind,$count<10?0:$offset+10);
@@ -276,12 +281,14 @@ final class Engine
                     if ($kind === 'product') {
                         $this->catalogApplying = true;
                         $id = $this->adapter->applyProduct($data, $map);
+                    } elseif ($kind === 'customer') {
+                        $id = $this->applyCustomer($data);
                     } else {
                         $this->orderApplying = true;
                         $id = $this->adapter->applyOrder($data, $map);
                     }
                     $this->bind($key, $kind, $id);
-                    $native = $kind === 'product' ? $this->adapter->product($id) : $this->adapter->order($id);
+                    $native = $kind === 'customer' ? $this->customer($id) : ($kind === 'product' ? $this->adapter->product($id) : $this->adapter->order($id));
                     $nativeHash = $kind === 'product' ? self::catalogHash($native) : Protocol::fingerprint($native);
                     $this->sql('UPDATE {b}map SET fingerprint=?,local_hash=? WHERE record_key=?', [$hash, $nativeHash, $key]);
                 }
@@ -339,6 +346,74 @@ final class Engine
                 'basis' => $prices['basis'] ?? '', 'initial_stock_snapshot' => implode('; ', $stock)];
         }
         return $result;
+    }
+
+    public function contactId(string $key): int
+    {
+        Protocol::validateKey($key);
+        if (!preg_match('/^(woo|ps):(customer|guest):[1-9][0-9]*$/D',$key)) { throw new \RuntimeException('Invalid contact identity.'); }
+        $this->sql('INSERT IGNORE INTO {b}contacts (record_key,data) VALUES (?,?)',[$key,'{}']);
+        $id=(int)$this->sql('SELECT id FROM {b}contacts WHERE record_key=?',[$key])[0]['id'];
+        $this->bind($key,'customer',$id); return $id;
+    }
+
+    public function customer(int $id): array
+    {
+        $row=$this->sql('SELECT * FROM {b}contacts WHERE id=?',[$id])[0]??null;
+        if (!$row) { throw new \RuntimeException('Contact is missing.'); }
+        $key=$row['record_key']; $parts=explode(':',$key);
+        $data=$parts[0]===$this->adapter->site() ? $this->adapter->contactProfile($parts[1],(int)$parts[2]) : json_decode($row['data'],true);
+        $data['key']=$key; $data=$this->contactData($data);
+        $this->sql('UPDATE {b}contacts SET data=? WHERE id=?',[Protocol::encode($data),$id]);
+        return $data;
+    }
+
+    private function contactData(array $data): array
+    {
+        foreach (['first_name','last_name','email','phone','company'] as $field) {
+            if (!is_string($data[$field]??null) || strlen($data[$field])>1000) { throw new \RuntimeException('Invalid contact field.'); }
+        }
+        if (!is_array($data['billing']??null) || !is_array($data['shipping']??null)) { throw new \RuntimeException('Invalid contact address.'); }
+        // Contact records contain no credentials, roles, payment tokens or marketing consents.
+        $clean=array_intersect_key($data,array_flip(['key','first_name','last_name','email','phone','company','billing','shipping','guest','deleted']));
+        $allowed=array_flip(['first_name','last_name','company','address_1','address_2','city','postcode','country','state','phone','email']);
+        foreach (['billing','shipping'] as $field) {
+            $clean[$field]=array_intersect_key($data[$field],$allowed);
+            foreach ($clean[$field] as $value) { if (!is_string($value) || strlen($value)>1000) { throw new \RuntimeException('Invalid contact address value.'); } }
+        }
+        $clean['guest']=(bool)($data['guest']??false); $clean['deleted']=(bool)($data['deleted']??false);
+        return $clean;
+    }
+
+    private function applyCustomer(array $data): int
+    {
+        if (strpos($data['key'],$this->adapter->site().':')===0) { throw new \RuntimeException('Contact details are edited on their originating store.'); }
+        $clean=$this->contactData($data); $id=$this->contactId($data['key']);
+        $this->sql('UPDATE {b}contacts SET data=? WHERE id=?',[Protocol::encode($clean),$id]); return $id;
+    }
+
+    public function customerReport(): array
+    {
+        $rows=$this->sql('SELECT record_key,data FROM {b}contacts ORDER BY record_key LIMIT 200'); $out=[];
+        foreach ($rows as $row) {
+            $d=json_decode($row['data'],true); if (empty($d['key'])) { continue; }
+            $billing=$d['billing']??[];
+            $out[]=['source'=>$row['record_key'],'name'=>trim(($d['first_name']??'').' '.($d['last_name']??'')),
+                'email'=>$d['email']??'','phone'=>$d['phone']??'','company'=>$d['company']??'',
+                'billing'=>implode(', ',array_filter(array_map(function($k)use($billing){return $billing[$k]??'';},['address_1','address_2','postcode','city','country']))),
+                'type'=>!empty($d['deleted'])?'deleted':(!empty($d['guest'])?'guest contact':'customer contact')];
+        }
+        return $out;
+    }
+
+    public function orderReport(): array
+    {
+        $out=[];
+        foreach ($this->sql("SELECT record_key,local_id FROM {b}map WHERE kind='order' ORDER BY record_key LIMIT 200") as $row) {
+            try { $out[]=['source'=>$row['record_key']]+$this->adapter->orderSummary((int)$row['local_id']); }
+            catch (\Throwable $e) { $out[]=['source'=>$row['record_key'],'local_id'=>$row['local_id'],'total'=>'unavailable','currency'=>'','status'=>'review','lines'=>'','unlinked_lines'=>'']; }
+        }
+        return $out;
     }
 
     public function report(): array

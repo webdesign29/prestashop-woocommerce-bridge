@@ -18,7 +18,7 @@ $module = Module::getInstanceByName('wd29woobridge');
 expect((bool)$module, 'Module could not be loaded');
 if (Module::isInstalled('wd29woobridge') && !Configuration::get('WD29_BRIDGE_CONFIG')) { $module->uninstall(); }
 if (!Module::isInstalled('wd29woobridge')) { expect($module->install(), 'Module installation failed'); }
-$e=$module->bridge(); $e->sql('TRUNCATE TABLE {b}queue'); $e->sql('TRUNCATE TABLE {b}map');
+$e=$module->bridge(); $e->install(); $e->sql('TRUNCATE TABLE {b}contacts'); $e->sql('TRUNCATE TABLE {b}queue'); $e->sql('TRUNCATE TABLE {b}map');
 $config=$e->config(); $config['mode']='audit'; $config['display_tax_rate']='20'; $config['display_basis']='gross';
 $config['tax_rules']=['20'=>1];
 $config['peer']='https://woo.example.test/wp-json/wd29-bridge/v1/webhook'; $config['secret']=str_repeat('fixture-',8);
@@ -74,6 +74,31 @@ expect(count($e->sql("SELECT seq FROM {b}queue WHERE direction='out' AND kind='p
 $send(str_repeat('e',32),'order',$order['key'],['base'=>'','hash'=>Protocol::fingerprint($order),'data'=>$order]);
 expect((int)$e->mapping($order['key'])['local_id']===(int)$o->id,'Duplicate native order created');
 echo "PASS: native PrestaShop installation, simple product, gross price mapping, stock delta/replay, local stock event, combination, unknown quantity and native order mirror\n";
+$historic=$order; $historic['key']='woo:order:902'; $historic['items'][0]['product']='woo:product:999999';
+$send(str_repeat('1',32),'order',$historic['key'],['base'=>'','hash'=>Protocol::fingerprint($historic),'data'=>$historic]);
+$hm=$e->mapping($historic['key']); expect($hm!==null,'Unmapped catalog product blocked historical order: '.json_encode($e->report()));
+expect($e->adapter->orderSummary((int)$hm['local_id'])['unlinked_lines']===1,'Historical source line missing');
+$late=$data; $late['key']='woo:product:999999'; $late['inventory'][0]['key']=$late['key'];
+$send(str_repeat('2',32),'product',$late['key'],['base'=>'','hash'=>Engine::catalogHash($late),'data'=>$late]);
+$e->adapter->reconcileOrderLinks((int)$hm['local_id']);
+expect($e->adapter->orderSummary((int)$hm['local_id'])['unlinked_lines']===0,'Late product mapping not attached');
+$ho=new Order((int)$hm['local_id']); expect((float)$ho->total_paid_tax_incl===12.5,'Late attachment changed order total');
+expect((int)StockAvailable::getQuantityAvailableByProduct((int)$e->mapping($late['key'])['local_id'],0,1)===10,'Late attachment changed stock');
+$contact=['key'=>'woo:customer:987','first_name'=>'Contact','last_name'=>'Fixture','email'=>'contact-only@example.test','phone'=>'1234','company'=>'Fixture','billing'=>[],'shipping'=>[],'guest'=>false,'deleted'=>false];
+$beforeCustomers=count($e->sql('SELECT id_customer FROM `'._DB_PREFIX_.'customer`'));
+$send(str_repeat('3',32),'customer',$contact['key'],['base'=>'','hash'=>Protocol::fingerprint($contact),'data'=>$contact]);
+expect($e->mapping($contact['key'])!==null,'Contact mirror missing');
+expect(count($e->sql('SELECT id_customer FROM `'._DB_PREFIX_.'customer`'))===$beforeCustomers,'Contact directory created native login accounts');
+$send(str_repeat('3',32),'customer',$contact['key'],['base'=>'','hash'=>Protocol::fingerprint($contact),'data'=>$contact]);
+expect(count($e->customerReport())===1,'Contact replay duplicated identity');
+echo "PASS: historical order independent of catalog, late links preserve stock/totals, contact mirrors without accounts\n";
+$sourceCustomer=new Customer(); $sourceCustomer->firstname='Profile'; $sourceCustomer->lastname='Fixture'; $sourceCustomer->email='contact_'.uniqid().'@example.test'; $sourceCustomer->passwd=Tools::hash('fixture-only-password'); $sourceCustomer->is_guest=true; $sourceCustomer->id_default_group=(int)Configuration::get('PS_GUEST_GROUP');
+expect($sourceCustomer->add(),'Source customer fixture failed');
+$cid=$e->contactId(Protocol::key('ps','customer',(int)$sourceCustomer->id)); $e->capture('customer',$cid);
+$cp=$e->customer($cid); expect($cp['first_name']==='Profile' && !isset($cp['passwd']) && !isset($cp['newsletter']),'Native customer profile export was not safe');
+expect($e->adapter->orderContact((int)$hm['local_id'])===null,'Mirrored customer was re-exported');
+expect(in_array($cid,$e->adapter->ids('customer',0,1000),true),'Customer batch omitted native contact');
+echo "PASS: native customer profile export and mirror exclusion\n";
 $config['mode']='disabled';Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
 
 $audited = $e->catalogAudit();

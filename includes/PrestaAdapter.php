@@ -28,6 +28,10 @@ final class PrestaAdapter
     }
     public function ids(string $kind, int $offset, int $limit): array
     {
+        if ($kind==='customer') {
+            $rows=$this->sql('SELECT c.id_customer FROM `'._DB_PREFIX_."customer` c WHERE c.deleted=0 AND NOT EXISTS (SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge') ORDER BY c.id_customer LIMIT ".(int)$offset.','.(int)$limit);
+            return array_map(function($row){return $this->engine->contactId(Protocol::key('ps','customer',(int)$row['id_customer']));},$rows);
+        }
         $table = $kind === 'order' ? 'orders' : 'product';
         $field = $kind === 'order' ? 'id_order' : 'id_product';
         return array_map('intval', array_column($this->sql('SELECT ' . $field . ' FROM `' . _DB_PREFIX_ . $table . '` ORDER BY ' . $field . ' LIMIT ' . (int) $offset . ',' . (int) $limit), $field));
@@ -320,6 +324,51 @@ final class PrestaAdapter
             'country' => \Country::getIsoById((int) $a->id_country), 'state' => $a->id_state ? (new \State((int) $a->id_state))->iso_code : '',
             'email' => $email, 'phone' => $a->phone_mobile ?: $a->phone];
     }
+    public function contactProfile(string $kind, int $id): array
+    {
+        $d=['first_name'=>'','last_name'=>'','email'=>'','phone'=>'','company'=>'','billing'=>[],'shipping'=>[],'guest'=>false,'deleted'=>false];
+        $c=new \Customer($id);
+        if (!\Validate::isLoadedObject($c) || $c->deleted) { $d['deleted']=true; return $d; }
+        $d['first_name']=$c->firstname; $d['last_name']=$c->lastname; $d['email']=$c->email; $d['company']=(string)$c->company; $d['guest']=(bool)$c->is_guest;
+        $orders=$this->sql('SELECT id_address_invoice,id_address_delivery FROM `'._DB_PREFIX_."orders` WHERE id_customer=? AND module<>'wd29woobridge' ORDER BY id_order DESC LIMIT 1",[$id]);
+        $addresses=$c->getAddresses($this->lang());
+        $billing=$orders[0]['id_address_invoice']??($addresses[0]['id_address']??0);
+        $shipping=$orders[0]['id_address_delivery']??$billing;
+        if ($billing) { $d['billing']=$this->address((int)$billing,$c->email); $d['phone']=$d['billing']['phone']; }
+        if ($shipping) { $d['shipping']=$this->address((int)$shipping,$c->email); }
+        return $d;
+    }
+
+    public function orderContact(int $id): ?string
+    {
+        $o=new \Order($id); if (!\Validate::isLoadedObject($o) || $o->module==='wd29woobridge' || !$o->id_customer) { return null; }
+        return Protocol::key('ps','customer',(int)$o->id_customer);
+    }
+
+    public function reconcileOrderLinks(int $id): void
+    {
+        $o=new \Order($id); if (!\Validate::isLoadedObject($o) || $o->module!=='wd29woobridge') { return; }
+        $rows=$this->engine->sql("SELECT snapshot FROM {b}map WHERE kind='order' AND local_id=?",[$id]);
+        $snapshot=json_decode($rows[0]['snapshot']??'{}',true); $index=0;
+        foreach ($o->getOrderDetailList() as $row) {
+            $source=$snapshot['items'][$index]??[]; $index++;
+            if ($row['product_id'] || empty($source['product']) || $row['product_name']!==($source['name']??'') || (int)$row['product_quantity']!==(int)($source['quantity']??0)) { continue; }
+            $map=$this->engine->mapping($source['product']); if (!$map) { continue; }
+            $detail=new \OrderDetail((int)$row['id_order_detail']);
+            $detail->product_attribute_id=$map['kind']==='variant'?(int)$map['local_id']:0;
+            $detail->product_id=$detail->product_attribute_id?(int)(new \Combination($detail->product_attribute_id))->id_product:(int)$map['local_id'];
+            if (!$detail->save()) { throw new \RuntimeException('Order catalog link could not be repaired.'); }
+        }
+    }
+
+    public function orderSummary(int $id): array
+    {
+        $o=new \Order($id); $lines=$o->getOrderDetailList(); $missing=0;
+        foreach ($lines as $row) { if (!$row['product_id']) { $missing++; } }
+        return ['local_id'=>$id,'total'=>$o->total_paid_tax_incl,'currency'=>(new \Currency((int)$o->id_currency))->iso_code,
+            'status'=>$this->config()['order_states'][(string)$o->current_state]??(string)$o->current_state,'lines'=>count($lines),'unlinked_lines'=>$missing];
+    }
+
     public function order(int $id): array
     {
         $o = new \Order($id);
@@ -430,7 +479,6 @@ final class PrestaAdapter
         foreach ($data['items'] as $row) {
             if ((int) $row['quantity'] < 1) { throw new \RuntimeException('Order line quantity must be positive.'); }
             $pm = !empty($row['product']) ? $this->engine->mapping($row['product']) : null;
-            if (!empty($row['product']) && !$pm) { throw new \RuntimeException('Order products must be synchronized first.'); }
             $detail = new \OrderDetail(); $detail->id_order = (int) $o->id; $detail->id_shop = $this->shop(); $detail->id_warehouse = 0;
             $detail->product_attribute_id = $pm && $pm['kind'] === 'variant' ? (int) $pm['local_id'] : 0;
             $detail->product_id = $detail->product_attribute_id ? (int) (new \Combination($detail->product_attribute_id))->id_product : ($pm ? (int) $pm['local_id'] : 0);

@@ -45,7 +45,7 @@ final class Protocol
 
     public static function key(string $site, string $kind, int $id): string
     {
-        if (!in_array($site, ['woo', 'ps'], true) || !in_array($kind, ['product', 'variant', 'order'], true) || $id < 1) {
+        if (!in_array($site, ['woo', 'ps'], true) || !in_array($kind, ['product', 'variant', 'order', 'customer', 'guest'], true) || $id < 1) {
             throw new \InvalidArgumentException('Invalid source identity.');
         }
         return "$site:$kind:$id";
@@ -53,7 +53,7 @@ final class Protocol
 
     public static function validateKey(string $key): void
     {
-        if (!preg_match('/^(woo|ps):(product|variant|order):[1-9][0-9]*$/D', $key)) {
+        if (!preg_match('/^(woo|ps):(product|variant|order|customer|guest):[1-9][0-9]*$/D', $key)) {
             throw new \InvalidArgumentException('Invalid record identity.');
         }
     }
