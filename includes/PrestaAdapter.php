@@ -375,7 +375,7 @@ final class PrestaAdapter
         if (!\Validate::isLoadedObject($o)) { throw new \RuntimeException('Order not found.'); }
         $statuses = $this->config()['order_states'] ?? [];
         $status = $statuses[(string) $o->current_state] ?? null;
-        if (!$status) { throw new \RuntimeException('PrestaShop order status has no WooCommerce mapping.'); }
+        if (!$status) { $status = 'ps-state-' . (int)$o->current_state; }
         $key = $this->engine->identity('order', $id);
         $map = $this->engine->mapping($key);
         if (strpos($key, 'woo:') === 0 && !empty($map['snapshot'])) {
@@ -390,12 +390,14 @@ final class PrestaAdapter
                 'name' => $row['product_name'], 'quantity' => (int) $row['product_quantity'],
                 'net' => $row['total_price_tax_excl'], 'tax' => (string) ((float) $row['total_price_tax_incl'] - (float) $row['total_price_tax_excl'])];
         }
-        return ['key' => $this->engine->identity('order', $id), 'number' => (string) $o->reference, 'status' => $status,
+        $data = ['key' => $this->engine->identity('order', $id), 'number' => (string) $o->reference, 'status' => $status,
             'currency' => (new \Currency((int) $o->id_currency))->iso_code, 'total' => (string) $o->total_paid_tax_incl,
             'tax' => (string) ($o->total_paid_tax_incl - $o->total_paid_tax_excl), 'shipping_net' => (string) $o->total_shipping_tax_excl,
             'shipping_tax' => (string) ($o->total_shipping_tax_incl - $o->total_shipping_tax_excl), 'discount' => (string) $o->total_discounts_tax_excl,
             'billing' => $this->address((int) $o->id_address_invoice, $customer->email),
             'shipping' => $this->address((int) $o->id_address_delivery, $customer->email), 'items' => $items, 'created' => date('c', strtotime($o->date_add))];
+        if (strpos($status,'ps-state-')===0) { $data['source_status']=['id'=>(int)$o->current_state,'label'=>(string)(new \OrderState((int)$o->current_state,$this->lang()))->name]; }
+        return $data;
     }
     public function applyOrder(array $data, ?array $map): int
     {

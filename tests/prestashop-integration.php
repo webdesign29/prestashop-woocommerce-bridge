@@ -115,3 +115,12 @@ echo "PASS: variable parent price fallback and mixed-stock overselling guard\n";
 $fields=$e->adapter->product($pid);
 expect($fields['brands']===['Fixture Brand'] && $fields['tags']===['Outlet','Summer'],'Native manufacturer/tags roundtrip failed');
 echo "PASS: encoded category labels and native manufacturer/tags\n";
+
+$customState=new OrderState(); $customState->name=[1=>'Reçue fixture']; $customState->color='#596b82'; $customState->send_email=false; $customState->invoice=false; $customState->paid=false; $customState->logable=false;
+expect($customState->add(),'Custom source state fixture failed');
+$customOrder=new Order((int)$hm['local_id']);
+$e->sql("UPDATE {b}map SET record_key=? WHERE kind='order' AND local_id=?",[Protocol::key('ps','order',(int)$customOrder->id),(int)$customOrder->id]);
+$customOrder->current_state=(int)$customState->id; expect($customOrder->save(),'Custom source order fixture failed');
+$wire=$e->adapter->order((int)$customOrder->id);
+expect($wire['status']==='ps-state-'.$customState->id && $wire['source_status']['label']==='Reçue fixture','Unknown source status was lost or guessed');
+echo "PASS: custom PrestaShop status preserves native ID and label\n";

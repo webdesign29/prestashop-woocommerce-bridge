@@ -75,3 +75,6 @@ Le « Customer contact directory » est un répertoire privé de copies de coord
 Ce répertoire ne crée ni ne fusionne de comptes de connexion WordPress ou PrestaShop : les comptes existants, mots de passe, rôles, tokens de paiement et consentements marketing ne sont pas transférés. Les adresses historiques des commandes restent leurs instantanés. La synchronisation des suppressions et de tout le carnet d’adresses demande un traitement explicite ; seuls les profils présents et les contacts des commandes sont parcourus. Les répertoires et leurs données restent dans les bases privées des boutiques et ne doivent jamais être publiés dans le dépôt.
 
 La mise à jour ajoute automatiquement une table privée de contacts et conserve les configurations, correspondances et historiques existants. Installer les deux versions avant de reprendre les échanges.
+
+### Source order statuses (0.1.5)
+Unknown PrestaShop order states travel with their native ID and label. WooCommerce automatically registers a private administrative status (for example `PrestaShop: Reçue`). The WordPress bridge panel offers a mapping to existing WooCommerce statuses and applies it to unchanged mirrors. This mapping changes mirror presentation only, retaining the canonical source status and financial snapshot. It does not mark a source sale paid, issue a new invoice, or create another stock movement.
