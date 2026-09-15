@@ -101,6 +101,10 @@ final class PrestaAdapter
         }
         // The parent quantity in PrestaShop is the sum of combinations, not a separate stock pool.
         $data['inventory'][] = $variants ? ['key' => $key, 'quantity' => null, 'status' => 'instock', 'backorders' => false] : $this->stock($id, 0, $key);
+        $manufacturer = $p->id_manufacturer ? new \Manufacturer((int)$p->id_manufacturer) : null;
+        $data['brands'] = $manufacturer && $manufacturer->id ? [$manufacturer->name] : [];
+        $tags = \Tag::getProductTags($id); $data['tags'] = $tags[$this->lang()] ?? [];
+        sort($data['tags']);
         return $data;
     }
     private function prices(array $prices): array
@@ -125,6 +129,7 @@ final class PrestaAdapter
     {
         $parent = (int) \Configuration::get('PS_HOME_CATEGORY');
         foreach ($path as $name) {
+            $name = html_entity_decode($name, ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $rows = $this->sql('SELECT c.id_category FROM `' . _DB_PREFIX_ . 'category` c JOIN `' . _DB_PREFIX_ . 'category_lang` l ON c.id_category=l.id_category WHERE c.id_parent=? AND l.id_lang=? AND l.id_shop=? AND l.name=?', [$parent, $this->lang(), $this->shop(), $name]);
             if ($rows) { $parent = (int) $rows[0]['id_category']; continue; }
             $c = new \Category(); $c->name = $this->languages($name); $c->link_rewrite = $this->languages(\Tools::link_rewrite($name) ?: 'category');
@@ -190,7 +195,17 @@ final class PrestaAdapter
         $p = $map ? new \Product((int) $map['local_id']) : new \Product();
         if ($map && !\Validate::isLoadedObject($p)) { throw new \RuntimeException('Mapped product no longer exists.'); }
         if ($map && $p->hasAttributes() && $data['type'] === 'simple') { throw new \RuntimeException('Removing combinations needs review.'); }
-        $p->name = $this->languages(strip_tags($data['name']));
+        if (isset($data['brands'])) {
+            if (count($data['brands']) > 1) { throw new \RuntimeException('PrestaShop supports one manufacturer per product; choose a brand mapping.'); }
+            $p->id_manufacturer = 0;
+            if ($data['brands']) {
+                $name = html_entity_decode($data['brands'][0], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                $mid = (int)\Manufacturer::getIdByName($name);
+                if (!$mid) { $m = new \Manufacturer(); $m->name = $name; $m->active = true; if (!$m->add()) { throw new \RuntimeException('Manufacturer creation failed.'); } $mid = (int)$m->id; }
+                $p->id_manufacturer = $mid;
+            }
+        }
+        $p->name = $this->languages(strip_tags(html_entity_decode($data['name'], ENT_QUOTES | ENT_HTML5, 'UTF-8')));
         $p->link_rewrite = $this->languages(\Tools::link_rewrite($data['name']) ?: 'product');
         $p->description = $this->languages(\Tools::purifyHTML($data['description']));
         $p->description_short = $this->languages(\Tools::purifyHTML($data['short_description']));
@@ -203,6 +218,12 @@ final class PrestaAdapter
         $p->id_category_default = $categories[0];
         if (!$p->save()) { throw new \RuntimeException('Product save failed.'); }
         $p->updateCategories($categories);
+        if (isset($data['tags'])) {
+            // Synchronize the shop's default language; other language tags stay untouched.
+            $this->sql('DELETE FROM `' . _DB_PREFIX_ . 'product_tag` WHERE id_product=? AND id_lang=?', [(int)$p->id,$this->lang()]);
+            $tags = array_map(function ($tag) { return html_entity_decode($tag, ENT_QUOTES | ENT_HTML5, 'UTF-8'); }, $data['tags']);
+            if ($tags && !\Tag::addTags($this->lang(), (int)$p->id, $tags)) { throw new \RuntimeException('Product tag mapping failed.'); }
+        }
         $this->engine->bind($data['key'], 'product', (int) $p->id);
         if (!$map) { $this->initializeStock((int) $p->id, 0, $data['key'], $data['inventory']); }
         foreach ($data['variants'] as $index => $row) {

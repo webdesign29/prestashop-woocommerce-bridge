@@ -29,7 +29,7 @@ $drain=function()use($e,$apply,$ready){for($round=0;$round<20;$round++){ $rows=$
 $send=function($id,$kind,$key,$payload)use($e,$drain){$e->receive(['source'=>'woo','op'=>'events','events'=>[['id'=>$id,'kind'=>$kind,'key'=>$key,'payload'=>$payload]]]);$drain();};
 $data=['key'=>'woo:product:800','type'=>'simple','name'=>'Fixture from Woo','sku'=>'','description'=>'<p>Fixture description</p>','short_description'=>'Fixture',
     'status'=>'publish','virtual'=>false,'currency'=>'EUR','prices'=>['regular'=>'12.50','sale'=>null,'tax_rate'=>null,'basis'=>'display'],'weight_kg'=>'0',
-    'categories'=>[['Fixture clothing','Fixture shirts']],'images'=>[],'attributes'=>[],'variants'=>[],
+    'brands'=>['Fixture Brand'], 'tags'=>['Summer','Outlet'], 'categories'=>[['Fixture clothing','Boots &amp; bottes']],'images'=>[],'attributes'=>[],'variants'=>[],
     'inventory'=>[['key'=>'woo:product:800','quantity'=>10,'status'=>'instock','backorders'=>false]]];
 $send(str_repeat('a',32),'product',$data['key'],['base'=>'','hash'=>Engine::catalogHash($data),'data'=>$data]);
 $map=$e->mapping($data['key']); expect($map!==null,'Product import failed: '.json_encode($e->report()));
@@ -86,3 +86,7 @@ try { $e->adapter->applyProduct($mixed,null); throw new RuntimeException('Mixed 
 catch (RuntimeException $error) { expect(strpos($error->getMessage(),'Mixed combination stock modes')!==false,'Unexpected mixed-stock failure'); }
 expect(!Product::isAvailableWhenOutOfStock(StockAvailable::outOfStock((int)$combo->id_product,1)), 'Tracked combinations inherited unlimited availability');
 echo "PASS: variable parent price fallback and mixed-stock overselling guard\n";
+
+$fields=$e->adapter->product($pid);
+expect($fields['brands']===['Fixture Brand'] && $fields['tags']===['Outlet','Summer'],'Native manufacturer/tags roundtrip failed');
+echo "PASS: encoded category labels and native manufacturer/tags\n";

@@ -333,7 +333,7 @@ final class Engine
             $prices = $data['prices'] ?? [];
             $map = $this->mapping($event['record_key']);
             $result[] = ['source' => $event['record_key'], 'local_id' => $map ? $map['local_id'] : 'not applied',
-                'name' => $data['name'] ?? '', 'type' => $data['type'] ?? '',
+                'name' => $data['name'] ?? '', 'brands' => implode(', ', $data['brands'] ?? []), 'tags' => implode(', ', $data['tags'] ?? []), 'type' => $data['type'] ?? '',
                 'regular' => $prices['regular'] ?? 'missing', 'sale' => $prices['sale'] ?? '',
                 'tax' => $prices['tax_rate'] === null ? 'unknown' : (string)$prices['tax_rate'] . '%',
                 'basis' => $prices['basis'] ?? '', 'initial_stock_snapshot' => implode('; ', $stock)];

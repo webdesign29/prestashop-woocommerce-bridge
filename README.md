@@ -59,3 +59,9 @@ WD29_PS_ROOT=/chemin/prestashop php tests/prestashop-integration.php
 ### Stock des déclinaisons
 
 PrestaShop partage une politique de commande hors stock pour toutes les déclinaisons. Les produits WooCommerce mélangeant des quantités suivies et des disponibilités sans quantité sont bloqués avant création pour éviter de rendre commandable une déclinaison à zéro. Harmoniser leur suivi de quantité avant import. Le prix de base des parents variables sans prix propre est calculé à partir des prix de leurs déclinaisons.
+
+### Champs complémentaires (0.1.3)
+
+Les marques WooCommerce sont reliées au fabricant PrestaShop (une marque maximum), et les étiquettes sont synchronisées dans la langue par défaut. Les champs absents des anciens événements ne suppriment pas ces valeurs. Les groupes ACF, les métadonnées privées des extensions, les champs de caisse KerAwen et les modèles SEO ne sont pas copiés automatiquement : ils demandent une correspondance explicite et une recette.
+
+Une remise globale PrestaShop déclarée, dont le montant explique exactement l’écart du total, est conservée dans la commande miroir WooCommerce sous une ligne négative « Source order discount ». Les autres écarts restent bloqués.
