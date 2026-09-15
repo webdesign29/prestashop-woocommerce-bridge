@@ -74,3 +74,8 @@ $send(str_repeat('e',32),'order',$order['key'],['base'=>'','hash'=>Protocol::fin
 expect((int)$e->mapping($order['key'])['local_id']===(int)$o->id,'Duplicate native order created');
 echo "PASS: native PrestaShop installation, simple product, gross price mapping, stock delta/replay, local stock event, combination, unknown quantity and native order mirror\n";
 $config['mode']='disabled';Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+
+$audited = $e->catalogAudit();
+expect(count($audited)>0, "Catalog audit omitted captured products");
+expect(strpos(json_encode($audited), "customer@example.test") === false, "Catalog audit leaked order data");
+echo "PASS: catalog audit includes products without customer order data\n";

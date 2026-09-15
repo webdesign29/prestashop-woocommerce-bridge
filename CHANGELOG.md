@@ -1,3 +1,7 @@
+# 0.1.1
+
+- Add a read-only catalog audit with source identities, destination mappings, tax basis and unknown inventory.
+
 # Changelog
 
 ## 0.1.0 — candidate à recette

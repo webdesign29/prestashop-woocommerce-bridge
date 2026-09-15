@@ -318,6 +318,29 @@ final class Engine
         $this->sql("UPDATE {b}queue SET state='pending',attempts=0,next_try=0 WHERE state='conflict' AND kind='product'");
     }
 
+    /** Latest transmitted snapshots, not a replacement for a live stock count. No customer data. */
+    public function catalogAudit(): array
+    {
+        $events = $this->sql("SELECT q.record_key,q.payload FROM {b}queue q WHERE q.kind='product' AND NOT EXISTS (SELECT 1 FROM {b}queue n WHERE n.kind='product' AND n.record_key=q.record_key AND n.seq>q.seq) ORDER BY q.record_key LIMIT 200");
+        $result = [];
+        foreach ($events as $event) {
+            $data = json_decode($event['payload'], true)['data'] ?? [];
+            $stock = [];
+            foreach ($data['inventory'] ?? [] as $item) {
+                if (($data['type'] ?? '') === 'variable' && $item['key'] === $event['record_key'] && $item['quantity'] === null) { continue; }
+                $stock[] = $item['key'] . ': ' . ($item['quantity'] === null ? 'unknown (' . ($item['status'] ?? '') . ')' : (string)$item['quantity']);
+            }
+            $prices = $data['prices'] ?? [];
+            $map = $this->mapping($event['record_key']);
+            $result[] = ['source' => $event['record_key'], 'local_id' => $map ? $map['local_id'] : 'not applied',
+                'name' => $data['name'] ?? '', 'type' => $data['type'] ?? '',
+                'regular' => $prices['regular'] ?? 'missing', 'sale' => $prices['sale'] ?? '',
+                'tax' => $prices['tax_rate'] === null ? 'unknown' : (string)$prices['tax_rate'] . '%',
+                'basis' => $prices['basis'] ?? '', 'initial_stock_snapshot' => implode('; ', $stock)];
+        }
+        return $result;
+    }
+
     public function report(): array
     {
         return $this->sql('SELECT seq,direction,kind,record_key,state,attempts,error,created_at FROM {b}queue ORDER BY seq DESC LIMIT 100');
