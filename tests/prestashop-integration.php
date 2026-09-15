@@ -18,7 +18,7 @@ $module = Module::getInstanceByName('wd29woobridge');
 expect((bool)$module, 'Module could not be loaded');
 if (Module::isInstalled('wd29woobridge') && !Configuration::get('WD29_BRIDGE_CONFIG')) { $module->uninstall(); }
 if (!Module::isInstalled('wd29woobridge')) { expect($module->install(), 'Module installation failed'); }
-$e=$module->bridge(); $e->install(); $e->sql('TRUNCATE TABLE {b}contacts'); $e->sql('TRUNCATE TABLE {b}queue'); $e->sql('TRUNCATE TABLE {b}map');
+$e=$module->bridge(); $e->install(); $e->sql('TRUNCATE TABLE {b}contacts'); $e->sql('TRUNCATE TABLE {b}queue'); $e->sql('TRUNCATE TABLE {b}map'); $e->sql('TRUNCATE TABLE {b}order_lines'); $e->sql('TRUNCATE TABLE {b}issues');
 $config=$e->config(); $config['mode']='audit'; $config['display_tax_rate']='20'; $config['display_basis']='gross';
 $config['tax_rules']=['20'=>1];
 $config['peer']='https://woo.example.test/wp-json/wd29-bridge/v1/webhook'; $config['secret']=str_repeat('fixture-',8);
@@ -206,3 +206,15 @@ $round=$e->adapter->product((int)$tm['local_id']);
 expect($round['custom_fields']['note']===['present'=>false,'value'=>null],'Custom field tombstone lost');
 echo "PASS: custom product/variant JSON, native re-export and deletion tombstones\n";
 $config['mode']='disabled'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+
+$stableMap=$e->mapping($order['key']); $beforeIds=array_column((new Order((int)$stableMap['local_id']))->getOrderDetailList(),'id_order_detail');
+$order['items'][0]['line_id']='12345'; $e->orderApplying=true;
+try { $e->adapter->applyOrder($order,$stableMap); $e->adapter->applyOrder($order,$e->mapping($order['key'])); }
+finally { $e->orderApplying=false; }
+expect(array_column((new Order((int)$stableMap['local_id']))->getOrderDetailList(),'id_order_detail')===$beforeIds,'Source line ID upgrade/replay replaced PS line IDs');
+$fields=WD29\Bridge\FieldMirrorAdmin::read($e,$transition['key']); $base=Protocol::fingerprint($fields);
+WD29\Bridge\FieldMirrorAdmin::save($e,$transition['key'],['note'=>['present'=>'1','json'=>'"Edited fixture"']],$base);
+expect(WD29\Bridge\FieldMirrorAdmin::read($e,$transition['key'])['note']['value']==='Edited fixture','PS custom editor failed');
+$blocked=false; try { WD29\Bridge\FieldMirrorAdmin::save($e,$transition['key'],['note'=>['present'=>'1','json'=>'"Stale edit"']],$base); } catch (Throwable $error) { $blocked=true; }
+expect($blocked,'Stale custom edit overwrote new value');
+echo "PASS: stable PS line IDs and custom field editor with stale-write protection\n";

@@ -3,6 +3,11 @@
 if (!defined('_PS_VERSION_')) { exit; }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Engine.php';
+require_once __DIR__ . '/includes/CustomerAccounts.php';
+require_once __DIR__ . '/includes/Refunds.php';
+require_once __DIR__ . '/includes/Suppliers.php';
+require_once __DIR__ . '/includes/DiagnosticsAdmin.php';
+require_once __DIR__ . '/includes/FieldMirrorAdmin.php';
 require_once __DIR__ . '/includes/PrestaAdapter.php';
 
 class Wd29woobridge extends Module
@@ -13,7 +18,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.1.10';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.2.0';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '8.99.99'];
         parent::__construct();
@@ -26,7 +31,7 @@ class Wd29woobridge extends Module
             $adapter = new \WD29\Bridge\PrestaAdapter();
             $this->bridgeEngine = new \WD29\Bridge\Engine($adapter); $adapter->engine = $this->bridgeEngine;
         }
-        if (Configuration::get('WD29_BRIDGE_SCHEMA') !== '4') { $this->bridgeEngine->install(); Configuration::updateValue('WD29_BRIDGE_SCHEMA','4'); }
+        if (Configuration::get('WD29_BRIDGE_SCHEMA') !== '5') { $this->bridgeEngine->install(); Configuration::updateValue('WD29_BRIDGE_SCHEMA','5'); }
         return $this->bridgeEngine;
     }
     public function install()
@@ -113,8 +118,11 @@ class Wd29woobridge extends Module
                     $rules = json_decode((string)Tools::getValue('tax_rules', '{}'), true);
                     if (!is_array($rules)) { throw new RuntimeException('Tax mappings must be a JSON object.'); }
                     foreach ($rules as $taxRate=>$id) { if (!is_numeric($taxRate) || !is_numeric($id) || (int)$id<1) { throw new RuntimeException('Invalid tax-rule mapping.'); } }
-                    $config['tax_rules']=$rules;
+                    $config['tax_rules']=$rules; $config['native_customers']=(bool)Tools::getValue('native_customers',false);
                     Configuration::updateValue('WD29_BRIDGE_CONFIG', json_encode($config)); $message = 'Settings saved.';
+                } elseif ($action === 'save_mirror_fields') {
+                    \WD29\Bridge\FieldMirrorAdmin::save($engine,(string)Tools::getValue('field_record'),(array)Tools::getValue('field_values',[]),(string)Tools::getValue('field_base'));
+                    $message='Custom fields saved and captured.';
                 } elseif ($action === 'health') { $message = json_encode($engine->peer(['op' => 'health'])); }
                 elseif ($action === 'tick') { $engine->tick(false); $message = 'Queue processed; inspect results below.'; }
                 elseif ($action === 'retry') { $engine->retry(); $message = 'Failed events queued again.'; }
@@ -137,10 +145,11 @@ class Wd29woobridge extends Module
         $html .= '<label>Tax rate for source prices without tax information (%) — leave blank until confirmed</label><input name="display_tax_rate" value="' . $this->escape($config['display_tax_rate'] ?? '') . '">';
         $html .= '<label>Those source prices are</label><select name="display_basis"><option value="gross"' . (($config['display_basis'] ?? 'gross') === 'gross' ? ' selected' : '') . '>Tax inclusive</option><option value="net"' . (($config['display_basis'] ?? '') === 'net' ? ' selected' : '') . '>Tax exclusive</option></select>';
         $html .= '<label>Tax rate → tax rules group ID, JSON (example: {&quot;20&quot;:1})</label><input name="tax_rules" value="'.$this->escape(json_encode($config['tax_rules'] ?? new stdClass())).'">';
+        $html .= '<label><input type="checkbox" name="native_customers" value="1"'.(!empty($config['native_customers'])?' checked':'').'> Create native accounts for registered source customers (independent passwords; no email merging)</label>';
         $html .= '<button class="btn btn-primary" name="bridge_action" value="save">Save settings</button></form><hr>';
         $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '"><label>Batch offset</label><input name="offset" type="number" min="0" value="0">';
         foreach (['health' => 'Test connection','seed' => 'Capture catalog', 'seed_customers'=>'Capture customer contacts','tick' => 'Process queue','retry' => 'Retry failures','resolve_catalog'=>'Retry catalog conflicts'] as $action => $label) { $html .= '<button class="btn btn-default" name="bridge_action" value="' . $action . '">' . $label . '</button> '; }
-        $html .= '</form><p>' . $this->escape(Configuration::get('WD29_BRIDGE_NOTICE')) . '</p><h3>Latest events</h3><table class="table"><thead><tr>';
+        $html .= '</form>'.\WD29\Bridge\DiagnosticsAdmin::render($engine).'<p>Last historical notice (see diagnostics for current state): ' . $this->escape(Configuration::get('WD29_BRIDGE_NOTICE')) . '</p><h3>Latest events</h3><table class="table"><thead><tr>';
         foreach (['seq','direction','kind','record_key','state','attempts','error','created_at'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->report() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
@@ -152,10 +161,19 @@ class Wd29woobridge extends Module
         foreach (['source','local_id','total','currency','status','lines','unlinked_lines'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->orderReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
-        $html .= '</tbody></table><h3>Customer contact directory</h3><p>Read-only contact copies edited on their source store. No login accounts, passwords or marketing consents copied. No automatic identity merge by email. Up to 200 contacts.</p><table class="table"><thead><tr>';
+        $html .= '</tbody></table><h3>Customer contact directory</h3><p>Read-only contact copies edited on their source store. Native accounts are optional; passwords and marketing consents are never copied. No automatic identity merge by email. Up to 200 contacts.</p><table class="table"><thead><tr>';
         foreach (['source','name','email','phone','company','billing','addresses','shipping','type'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->customerReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
-        return $html . '</tbody></table></div>';
+        $html.='</tbody></table><h3>Edit synchronized custom fields</h3><p>Load a mapped product, variant or order key. Only fields already received from WooCommerce can be edited. Values use JSON to retain their type.</p><form method="post"><input type="hidden" name="wd29_token" value="'.$this->escape(Tools::getAdminTokenLite('AdminModules')).'"><label>Record key</label><input name="field_record" value="'.$this->escape(Tools::getValue('field_record','')).'"><button name="bridge_action" value="load_mirror_fields" class="btn btn-default">Load custom fields</button>';
+        if (in_array((string)Tools::getValue('bridge_action'),['load_mirror_fields','save_mirror_fields'],true)) {
+            try {
+                $fields=\WD29\Bridge\FieldMirrorAdmin::read($engine,(string)Tools::getValue('field_record'));
+                $html.='<input type="hidden" name="field_base" value="'.$this->escape(\WD29\Bridge\Protocol::fingerprint($fields)).'">';
+                foreach ($fields as $id=>$entry) { $html.='<label>'.$this->escape($id).'</label><label><input type="checkbox" name="field_values['.$this->escape($id).'][present]" value="1"'.(!empty($entry['present'])?' checked':'').'> Present</label><textarea name="field_values['.$this->escape($id).'][json]">'.$this->escape(json_encode($entry['value'],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)).'</textarea>'; }
+                if ($fields) { $html.='<button class="btn btn-primary" name="bridge_action" value="save_mirror_fields">Save custom fields</button>'; } else { $html.='<p>No synchronized custom fields for this record.</p>'; }
+            } catch (Throwable $error) { $html.='<p>'.$this->escape($error->getMessage()).'</p>'; }
+        }
+        return $html.'</form></div>';
     }
 }

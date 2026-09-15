@@ -34,7 +34,7 @@ final class PrestaAdapter
     public function ids(string $kind, int $offset, int $limit): array
     {
         if ($kind==='customer') {
-            $rows=$this->sql('SELECT c.id_customer FROM `'._DB_PREFIX_."customer` c WHERE c.deleted=0 AND NOT EXISTS (SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge') ORDER BY c.id_customer LIMIT ".(int)$offset.','.(int)$limit);
+            $rows=$this->sql('SELECT c.id_customer FROM `'._DB_PREFIX_."customer` c WHERE c.deleted=0 AND NOT EXISTS (SELECT 1 FROM `"._DB_PREFIX_."wd29_bridge_account_links` l WHERE l.native_id=c.id_customer) AND NOT EXISTS (SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge') ORDER BY c.id_customer LIMIT ".(int)$offset.','.(int)$limit);
             return array_map(function($row){return $this->engine->contactId(Protocol::key('ps','customer',(int)$row['id_customer']));},$rows);
         }
         $table = $kind === 'order' ? 'orders' : 'product';
@@ -59,7 +59,7 @@ final class PrestaAdapter
     }
     private function extraFields($p): array
     {
-        $extra=['identifiers'=>['ean13'=>(string)$p->ean13,'upc'=>(string)$p->upc,'isbn'=>(string)$p->isbn,'mpn'=>(string)$p->mpn], 'purchase_price_net'=>(string)$p->wholesale_price];
+        $extra=['suppliers'=>Suppliers::export($p),'identifiers'=>['ean13'=>(string)$p->ean13,'upc'=>(string)$p->upc,'isbn'=>(string)$p->isbn,'mpn'=>(string)$p->mpn], 'purchase_price_net'=>(string)$p->wholesale_price];
         if ($p instanceof \Product) {
             $supplier=$p->id_supplier?new \Supplier((int)$p->id_supplier):null;
             $extra['supplier']=['name'=>$supplier?(string)$supplier->name:'','reference'=>$supplier?(string)\ProductSupplier::getProductSupplierReference((int)$p->id,0,(int)$supplier->id):''];
@@ -303,6 +303,7 @@ final class PrestaAdapter
         if (!$categories) { $categories[] = (int) \Configuration::get('PS_HOME_CATEGORY'); }
         $p->id_category_default = $categories[0];
         if (!$p->save()) { throw new \RuntimeException('Product save failed.'); }
+        if (isset($data['suppliers'])) { Suppliers::apply($p,$data['suppliers']); }
         if (isset($data['supplier']) && $p->id_supplier) {
             $sid=(int)\ProductSupplier::getIdByProductAndSupplier((int)$p->id,0,(int)$p->id_supplier);
             $supplierProduct=$sid?new \ProductSupplier($sid):new \ProductSupplier();
@@ -332,6 +333,7 @@ final class PrestaAdapter
             if (!$vm) { $v->default_on = $index === 0 ? 1 : null; }
             $this->applyExtraFields($v,$row);
             if (!$v->save()) { throw new \RuntimeException('Combination save failed.'); }
+            if (isset($row['suppliers'])) { Suppliers::apply($v,$row['suppliers']); }
             $attributes = []; foreach ($row['attributes'] as $group => $name) { $attributes[] = $this->attribute($group, $name); }
             $v->setAttributes($attributes);
             $this->engine->bind($row['key'], 'variant', (int) $v->id);
@@ -406,7 +408,17 @@ final class PrestaAdapter
         $aid = $map['kind'] === 'variant' ? (int) $map['local_id'] : 0;
         $pid = $aid ? (int) (new \Combination($aid))->id_product : (int) $map['local_id'];
         if (!$pid) { throw new \RuntimeException('Stock product no longer exists.'); }
-        \StockAvailable::updateQuantity($pid, $aid, $delta, $this->shop(), true);
+        // PrestaShop's stock ledger requires a non-null employee ID even in CLI/webhook
+        // requests. Its StockManager ignores employee parameters and reads Context.
+        // An unsaved ID-0 system actor records attribution without impersonating staff.
+        $context=\Context::getContext(); $previousEmployee=$context->employee;
+        if (!$previousEmployee || !(int)$previousEmployee->id) {
+            $systemActor=new \Employee(); $systemActor->id=0;
+            $systemActor->firstname='WD29'; $systemActor->lastname='Bridge';
+            $context->employee=$systemActor;
+        }
+        try { \StockAvailable::updateQuantity($pid, $aid, $delta, $this->shop(), true); }
+        finally { $context->employee=$previousEmployee; }
     }
     public function stockQuantity(array $map): ?int
     {
@@ -446,6 +458,8 @@ final class PrestaAdapter
         if ($shipping) { $d['shipping']=$this->address((int)$shipping,$c->email); }
         return $d;
     }
+
+    public function applyCustomerAccount(array $data): int { return CustomerAccounts::apply($this->engine,$data); }
 
     public function orderContact(int $id): ?string
     {
@@ -494,7 +508,7 @@ final class PrestaAdapter
         $customer = new \Customer((int) $o->id_customer); $items = [];
         foreach ($o->getOrderDetailList() as $row) {
             $pid = (int) $row['product_attribute_id'] ?: (int) $row['product_id'];
-            $items[] = ['product' => $pid ? $this->engine->identity($row['product_attribute_id'] ? 'variant' : 'product', $pid) : null,
+            $items[] = ['line_id'=>(string)$row['id_order_detail'], 'product' => $pid ? $this->engine->identity($row['product_attribute_id'] ? 'variant' : 'product', $pid) : null,
                 'name' => $row['product_name'], 'quantity' => (int) $row['product_quantity'],
                 'net' => $row['total_price_tax_excl'], 'tax' => (string) ((float) $row['total_price_tax_incl'] - (float) $row['total_price_tax_excl'])];
         }
@@ -502,19 +516,24 @@ final class PrestaAdapter
             'currency' => (new \Currency((int) $o->id_currency))->iso_code, 'total' => (string) $o->total_paid_tax_incl,
             'tax' => (string) ($o->total_paid_tax_incl - $o->total_paid_tax_excl), 'shipping_net' => (string) $o->total_shipping_tax_excl,
             'shipping_tax' => (string) ($o->total_shipping_tax_incl - $o->total_shipping_tax_excl), 'discount' => (string) $o->total_discounts_tax_excl,
-            'billing' => $this->address((int) $o->id_address_invoice, $customer->email),
+            'refunds'=>Refunds::export($o), 'billing' => $this->address((int) $o->id_address_invoice, $customer->email),
             'shipping' => $this->address((int) $o->id_address_delivery, $customer->email), 'items' => $items, 'created' => date('c', strtotime($o->date_add))];
         if (strpos($status,'ps-state-')===0) { $data['source_status']=['id'=>(int)$o->current_state,'label'=>(string)(new \OrderState((int)$o->current_state,$this->lang()))->name]; }
+        if (isset($map['snapshot'])) { $extras=json_decode($map['snapshot'],true)?:[]; if (isset($extras['custom_fields'])) { $data['custom_fields']=$extras['custom_fields']; } }
         return $data;
     }
     public function applyOrder(array $data, ?array $map): int
     {
+        if (isset($data['refunds'])) { $data['refunds']=Refunds::validateOrder($data); }
         $config = $this->config();
         if ($map && strpos($data['key'], 'ps:') === 0) {
             $current = $this->order((int) $map['local_id']); $incoming = $data;
             $sameStatus = $current['status'] === $incoming['status'];
-            unset($current['status'], $incoming['status']);
+            unset($current['status'], $incoming['status'], $current['custom_fields'], $incoming['custom_fields']);
+            foreach (['current','incoming'] as $side) { foreach (${$side}['items'] as &$line) { unset($line['line_id']); } unset($line); }
+            if (!array_key_exists('refunds',$incoming)) { unset($current['refunds']); }
             if (Protocol::fingerprint($current) !== Protocol::fingerprint($incoming)) { throw new \RuntimeException('Financial order edits belong on the source store.'); }
+            if (isset($data['custom_fields'])) { $saved=json_decode($map['snapshot']??'{}',true)?:[]; $saved['custom_fields']=$data['custom_fields']; $this->engine->sql('UPDATE {b}map SET snapshot=? WHERE record_key=?',[Protocol::encode($saved),$data['key']]); }
             if ($sameStatus) { return (int)$map['local_id']; }
             $state = array_search($data['status'], $config['native_states'] ?? [], true);
             if (!$state) { throw new \RuntimeException('No native PrestaShop order-status mapping.'); }
@@ -583,13 +602,18 @@ final class PrestaAdapter
         $o->total_discounts = $o->total_discounts_tax_incl = $o->total_discounts_tax_excl = 0;
         // Lines already contain source discounts; the untouched source snapshot records the original discount amount.
         if (!$o->save()) { throw new \RuntimeException('Order record could not be saved.'); }
-        if ($map) {
-            foreach ($o->getOrderDetailList() as $row) { $detail = new \OrderDetail((int) $row['id_order_detail']); $detail->delete(); }
-        }
-        foreach ($data['items'] as $row) {
+        $existingLines=$o->getOrderDetailList(); $lineMap=[];
+        foreach ($this->engine->sql('SELECT line_key,native_id FROM {b}order_lines WHERE order_key=?',[$data['key']]) as $entry) { $lineMap[$entry['line_key']]=(int)$entry['native_id']; }
+        $legacyLines=$lineMap?[]:$existingLines; $kept=[];
+        foreach ($data['items'] as $index=>$row) {
+            $lineKey=isset($row['line_id'])?'source:'.$row['line_id']:'legacy:'.$index;
+            if (strlen($lineKey)>96 || isset($kept[$lineKey])) { throw new \RuntimeException('Invalid or duplicate source order line.'); }
+            $nativeLine=$lineMap[$lineKey]??($lineMap['legacy:'.$index]??($legacyLines[$index]['id_order_detail']??0));
             if ((int) $row['quantity'] < 1) { throw new \RuntimeException('Order line quantity must be positive.'); }
             $pm = !empty($row['product']) ? $this->engine->mapping($row['product']) : null;
-            $detail = new \OrderDetail(); $detail->id_order = (int) $o->id; $detail->id_shop = $this->shop(); $detail->id_warehouse = 0;
+            $detail = $nativeLine?new \OrderDetail((int)$nativeLine):new \OrderDetail();
+            if ($nativeLine && (!\Validate::isLoadedObject($detail) || (int)$detail->id_order!==(int)$o->id)) { throw new \RuntimeException('Mapped order line missing or belongs to another order.'); }
+            $detail->id_order = (int) $o->id; $detail->id_shop = $this->shop(); $detail->id_warehouse = 0;
             $detail->product_attribute_id = $pm && $pm['kind'] === 'variant' ? (int) $pm['local_id'] : 0;
             $detail->product_id = $detail->product_attribute_id ? (int) (new \Combination($detail->product_attribute_id))->id_product : ($pm ? (int) $pm['local_id'] : 0);
             $detail->product_name = $row['name']; $detail->product_quantity = (int) $row['quantity'];
@@ -598,8 +622,12 @@ final class PrestaAdapter
             $detail->unit_price_tax_excl = $detail->product_price = number_format((float) $row['net'] / (int) $row['quantity'],6,'.','');
             $detail->unit_price_tax_incl = number_format($detail->total_price_tax_incl / (int) $row['quantity'],6,'.','');
             $detail->original_product_price = $detail->product_price;
-            if (!$detail->add()) { throw new \RuntimeException('Order line could not be recorded.'); }
+            if (!$detail->save()) { throw new \RuntimeException('Order line could not be recorded.'); }
+            $kept[$lineKey]=(int)$detail->id;
+            $this->engine->sql('DELETE FROM {b}order_lines WHERE order_key=? AND native_id=? AND line_key<>?',[$data['key'],(int)$detail->id,$lineKey]);
+            $this->engine->sql('INSERT INTO {b}order_lines (order_key,line_key,native_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE native_id=VALUES(native_id)',[$data['key'],$lineKey,(int)$detail->id]);
         }
+        foreach ($existingLines as $old) { if (!in_array((int)$old['id_order_detail'],array_values($kept),true)) { (new \OrderDetail((int)$old['id_order_detail']))->delete(); $this->engine->sql('DELETE FROM {b}order_lines WHERE native_id=?',[(int)$old['id_order_detail']]); } }
         // Direct object recording deliberately avoids PaymentModule::validateOrder and its stock/payment side effects.
         $this->engine->bind($data['key'], 'order', (int) $o->id);
         $this->engine->sql('UPDATE {b}map SET snapshot=? WHERE record_key=?', [Protocol::encode($data), $data['key']]);

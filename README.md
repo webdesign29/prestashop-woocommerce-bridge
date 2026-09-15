@@ -99,7 +99,7 @@ The primary supplier name/reference and the explicit net unit purchasing cost ma
 Catalog updates now refresh the PrestaShop ordering-out-of-stock policy for existing products, without resetting tracked quantities. The WooCommerce bridge panel exposes an explicit batched action to set unknown source-owned variation quantities to zero and disable backorders. Known quantities and PrestaShop-owned products are preserved; parent-managed inventory requires a separate allocation decision. Only use the action after choosing this inventory policy.
 
 
-## Product custom metadata and ACF (0.1.10)
+## Historical 0.1.10 scope (superseded by 0.2.0 below)
 
 Configure the explicit allowlist in the WooCommerce bridge panel. Empty by default:
 
@@ -117,3 +117,19 @@ Supported ACF types: text, textarea, number, range, email, URL, true/false, sele
 PrestaShop retains selected values privately in the bridge mapping snapshot and re-exports them unchanged on catalog edits. This does not create native PrestaShop features or KerAwen fields, or a custom field editor there. Existing conflict handling applies. Explicit missing-value markers propagate deletion; omitted IDs leave WooCommerce fields untouched. Removing an allowlist mapping does not delete local source metadata. WordPress scalar storage conventions apply; arrays preserve their JSON structure. Duplicate rows for one metadata key are not supported.
 
 Validation: native WooCommerce/PrestaShop suites plus `WD29_WP_ROOT=/path/to/disposable/wordpress php tests/custom-fields-integration.php` in the WooCommerce repository with official ACF installed (database must be wd29woo, domain woo.example.test). See [ACF field API](https://www.advancedcustomfields.com/resources/get_field_object/).
+
+
+## Version 0.2.0 — broader synchronization and operational checks
+
+- Visual Woo field allowlist with product, variation, order and registered-customer scopes; HPOS order metadata.
+- ACF native groups, image URLs, synchronized-product relationships; PRO repeaters/galleries are supported when available, with native PRO storage not yet exercised in our free-ACF fixture. See CUSTOM-FIELDS.md for exact type and identity boundaries.
+- PrestaShop bridge editor for already synchronized product/variant/order custom values, with stale-edit detection. This is not a KerAwen field mapping.
+- Additive multiple supplier purchasing records, per parent/variant, with currency validation and independent primary selection; see SUPPLIERS.md.
+- Source-owned refund/credit-slip audit records; no second money movement, fiscal document, or stock restoration. Native mirrored order-line IDs stay stable, including upgrades from old payloads.
+- Optional native customer accounts with independent passwords, no automatic email merge, source-owned profile updates and standard billing/shipping addresses. Disabled by default. Additional addresses remain in the complete private contact directory. No marketing consent transfer; Woo account notifications suppressed. Native account deletion/deactivation is not automatically propagated.
+- CLI-only server worker, structured diagnostics and keyed errors; see OPERATIONS.md. An actual server schedule still requires installation on the hosting account.
+- PrestaShop stock workers now record automated movements under an unsaved system actor (employee ID0), avoiding failure when no staff member is logged in.
+
+Validated with native Woo/PS integration suites, real HPOS storage, free ACF, supplier/account/refund fixtures, MySQL rollback/replay/retry/worker-lock tests, and cross-store concurrent stock movements. The cross-store test uses signed file bundles and native PS adjustments; it is not a real KerAwen cash-register transaction or an HTTPS end-to-end checkout.
+
+Remaining: supported KerAwen API contract for loyalty/redemption/procurement/private fields; real POS acceptance tests; hosting scheduler activation; ACF PRO native tests and unsupported field types; shared reservation for simultaneous last-unit sales; advanced catalog types (packs, protected downloads, multistore), destructive gallery/product deletion semantics and full fiscal/payment refund workflows. Ordinary asynchronous stock synchronization alone cannot prevent simultaneous last-unit overselling.

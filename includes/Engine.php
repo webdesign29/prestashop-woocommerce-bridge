@@ -24,6 +24,9 @@ final class Engine
     public function install(): void
     {
         foreach ([
+            'account_links' => 'record_key varchar(96) NOT NULL, native_id bigint unsigned NOT NULL, PRIMARY KEY(record_key), UNIQUE KEY native_account(native_id)',
+            'issues' => 'issue_key varchar(96) NOT NULL, code varchar(32) NOT NULL, first_seen bigint NOT NULL, last_seen bigint NOT NULL, occurrences int NOT NULL DEFAULT 1, PRIMARY KEY(issue_key)',
+            'order_lines' => 'order_key varchar(96) NOT NULL, line_key varchar(96) NOT NULL, native_id bigint unsigned NOT NULL, PRIMARY KEY(order_key,line_key), UNIQUE KEY native_line(native_id)',
             'contacts' => 'id bigint unsigned NOT NULL AUTO_INCREMENT, record_key varchar(96) NOT NULL, data longtext NOT NULL, PRIMARY KEY(id), UNIQUE KEY origin(record_key)',
             'map' => 'record_key varchar(96) NOT NULL, kind varchar(16) NOT NULL, local_id bigint unsigned NOT NULL, fingerprint varchar(64) NOT NULL DEFAULT \'\', local_hash varchar(64) NOT NULL DEFAULT \'\', quantity bigint NULL, stock_initialized tinyint NOT NULL DEFAULT 0, snapshot longtext NULL, PRIMARY KEY(record_key), UNIQUE KEY native_record(kind,local_id)',
             'queue' => 'seq bigint unsigned NOT NULL AUTO_INCREMENT, event_id char(32) NOT NULL, direction varchar(8) NOT NULL, kind varchar(16) NOT NULL, record_key varchar(96) NOT NULL, payload longtext NOT NULL, state varchar(16) NOT NULL DEFAULT \'pending\', attempts int NOT NULL DEFAULT 0, next_try bigint NOT NULL DEFAULT 0, error varchar(255) NOT NULL DEFAULT \'\', created_at datetime NOT NULL, PRIMARY KEY(seq), UNIQUE KEY event_direction(event_id,direction), KEY pending_queue(direction,state,next_try)',
@@ -108,8 +111,10 @@ final class Engine
             if ($kind === 'product') {
                 foreach ($data['inventory'] as $inventory) { $this->captureStock($inventory['key'], $inventory['quantity']); }
             }
+            $this->resolveIssue('capture:' . $kind . ':' . $id);
         } catch (\Throwable $error) {
             $this->sql('ROLLBACK');
+            $this->recordIssue('capture:' . $kind . ':' . $id, 'capture_failed');
             $this->adapter->notice('Could not capture ' . $kind . ' #' . $id . ': ' . $error->getMessage());
         } finally {
             if ($locked) { $this->sql('SELECT RELEASE_LOCK(?)', [$lock]); }
@@ -143,7 +148,7 @@ final class Engine
     {
         Protocol::validateKey($key);
         $id = $id ?? bin2hex(random_bytes(16));
-        if (!preg_match('/^[a-f0-9]{32}$/D', $id) || !in_array($kind, ['product', 'stock', 'order', 'customer'], true)) {
+        if (!in_array($direction, ['in','out'], true) || !preg_match('/^[a-f0-9]{32}$/D', $id) || !in_array($kind, ['product', 'stock', 'order', 'customer'], true)) {
             throw new \RuntimeException('Invalid event envelope.');
         }
         $this->sql('INSERT IGNORE INTO {b}queue (event_id,direction,kind,record_key,payload,created_at) VALUES (?,?,?,?,?,?)',
@@ -155,7 +160,7 @@ final class Engine
         if (($message['source'] ?? '') !== ($this->adapter->site() === 'woo' ? 'ps' : 'woo')) { throw new \RuntimeException('Peer platform mismatch.'); }
         $op = $message['op'] ?? '';
         if ($op === 'health') {
-            return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->config()['mode'], 'worker'=>$this->adapter->workerStatus()];
+            return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->config()['mode'], 'worker'=>$this->adapter->workerStatus(), 'diagnostics'=>$this->diagnostics()];
         }
         if (!$this->enabled()) { throw new \RuntimeException('Bridge is disabled.'); }
         if ($op === 'events') {
@@ -231,8 +236,8 @@ final class Engine
             $this->sql('SELECT RELEASE_LOCK(?)', [$lock]);
         }
         if ($wakePeer) {
-            try { $this->peer(['op' => 'tick']); $this->adapter->notice(''); }
-            catch (\Throwable $error) { $this->adapter->notice($error->getMessage()); }
+            try { $this->peer(['op' => 'tick']); $this->resolveIssue('peer'); }
+            catch (\Throwable $error) { $this->recordIssue('peer', 'peer_unreachable'); $this->adapter->notice($error->getMessage()); }
         }
     }
 
@@ -243,12 +248,13 @@ final class Engine
 
     private function apply(array $event): void
     {
-        $payload = json_decode($event['payload'], true, 64, JSON_THROW_ON_ERROR);
         $key = $event['record_key'];
         $kind = $event['kind'];
         $stockLock = null;
         $this->sql('START TRANSACTION');
         try {
+            $payload = json_decode($event['payload'], true, 64, JSON_THROW_ON_ERROR);
+            if (!is_array($payload)) { throw new \RuntimeException('Invalid event payload.'); }
             $map = $this->mapping($key);
             if ($kind === 'stock') {
                 $stockLock = 'wd29_stock_' . sha1($this->table . $key);
@@ -307,6 +313,7 @@ final class Engine
             $this->sql('COMMIT');
         } catch (\Throwable $error) {
             $this->sql('ROLLBACK');
+            if (method_exists($this->adapter,'afterRollback')) { $this->adapter->afterRollback($kind,(int)($map['local_id']??0)); }
             $this->fail($event, $error);
         } finally {
             $this->catalogApplying = $this->orderApplying = $this->stockApplying = false;
@@ -424,14 +431,35 @@ final class Engine
             }
         }
         $clean['guest']=(bool)($data['guest']??false); $clean['deleted']=(bool)($data['deleted']??false);
+        if (array_key_exists('custom_fields',$data)) {
+            $fields=$data['custom_fields'];
+            if (!is_array($fields) || count($fields)>50) { throw new \RuntimeException('Invalid contact custom fields.'); }
+            foreach ($fields as $id=>$entry) {
+                if (!is_string($id) || !preg_match('/^[a-z][a-z0-9_]{0,63}$/D',$id) || !is_array($entry) || !is_bool($entry['present']??null) || !array_key_exists('value',$entry) || count($entry)!==2) { throw new \RuntimeException('Invalid contact custom field envelope.'); }
+                self::customValue($entry['value']);
+            }
+            $clean['custom_fields']=$clean['deleted']?[]:$fields;
+        }
         return $clean;
+    }
+
+    private static function customValue($value,int $depth=0): void
+    {
+        if ($depth>8 || is_object($value) || is_resource($value) || (is_float($value) && !is_finite($value))) { throw new \RuntimeException('Custom fields require bounded JSON values.'); }
+        if (is_array($value)) {
+            if (count($value)>500) { throw new \RuntimeException('Custom field array too large.'); }
+            foreach ($value as $item) { self::customValue($item,$depth+1); }
+        }
+        if ($depth===0 && strlen(json_encode($value,JSON_THROW_ON_ERROR))>65536) { throw new \RuntimeException('Custom field exceeds 64 KiB.'); }
     }
 
     private function applyCustomer(array $data): int
     {
         if (strpos($data['key'],$this->adapter->site().':')===0) { throw new \RuntimeException('Contact details are edited on their originating store.'); }
         $clean=$this->contactData($data); $id=$this->contactId($data['key']);
-        $this->sql('UPDATE {b}contacts SET data=? WHERE id=?',[Protocol::encode($clean),$id]); return $id;
+        $this->sql('UPDATE {b}contacts SET data=? WHERE id=?',[Protocol::encode($clean),$id]);
+        if (!empty($this->config()['native_customers']) && !$clean['guest'] && !$clean['deleted'] && method_exists($this->adapter,'applyCustomerAccount')) { $this->adapter->applyCustomerAccount($clean); }
+        return $id;
     }
 
     public function customerReport(): array
@@ -458,6 +486,46 @@ final class Engine
             catch (\Throwable $e) { $out[]=['source'=>$row['record_key'],'local_id'=>$row['local_id'],'total'=>'unavailable','currency'=>'','status'=>'review','lines'=>'','unlinked_lines'=>'']; }
         }
         return $out;
+    }
+
+    /** Operational issues contain only internal identities and codes, never payloads or credentials. */
+    private function recordIssue(string $key, string $code): void
+    {
+        $this->sql('INSERT INTO {b}issues (issue_key,code,first_seen,last_seen) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE code=VALUES(code),last_seen=VALUES(last_seen),occurrences=occurrences+1', [$key,$code,time(),time()]);
+    }
+
+    private function resolveIssue(string $key): void { $this->sql('DELETE FROM {b}issues WHERE issue_key=?',[$key]); }
+
+    /** Machine-readable, payload-free report suitable for local monitoring and signed health checks. */
+    public function diagnostics(?int $now=null): array
+    {
+        $now=$now??time(); $worker=$this->adapter->workerStatus(); $at=strtotime($worker['at']??'');
+        $workerAge=$at===false?null:max(0,$now-$at); $mode=$this->config()['mode']??'disabled'; $issues=[];
+        if ($mode!=='disabled' && ($workerAge===null || $workerAge>300)) {
+            $issues[]=['code'=>'worker_stale','severity'=>'error','action'=>'Run the server worker every minute; check its exit status and PHP/database availability.'];
+        } elseif (($worker['state']??'')==='failed' || ($worker['state']??'')==='delivery_error') {
+            $issues[]=['code'=>'worker_failed','severity'=>'error','action'=>'Inspect failed/retrying events and server logs, then run the worker again.'];
+        }
+        $queue=$this->sql("SELECT direction,state,COUNT(*) total,MIN(created_at) oldest_at,MIN(next_try) next_try,SUM(attempts>0) retried FROM {b}queue WHERE state IN ('pending','failed','conflict') GROUP BY direction,state");
+        foreach ($queue as &$group) {
+            $group['total']=(int)$group['total']; $group['retried']=(int)$group['retried'];
+            $group['oldest_age_seconds']=max(0,$now-(strtotime($group['oldest_at'].' UTC')?:$now));
+            $group['next_retry_in_seconds']=max(0,(int)$group['next_try']-$now);
+            unset($group['oldest_at'],$group['next_try']);
+            if ($group['state']==='conflict') { $code='record_conflict'; $action='Review both versions; select catalog priority only for products, then retry the reviewed conflict.'; }
+            elseif ($group['state']==='failed') { $code='retry_exhausted'; $action='Correct the event error in the journal, then retry. Later events for the same record remain blocked.'; }
+            elseif ($group['retried']>0) { $code='event_retrying'; $action='Check the journal and peer health. Automatic exponential retries stop after eight attempts.'; }
+            elseif ($group['oldest_age_seconds']>300 && !($mode==='audit' && $group['direction']==='in')) { $code='queue_delayed'; $action='Check both workers and earlier failed/conflicting events for this record; allow further bounded batches to run.'; }
+            else { continue; }
+            $issues[]=['code'=>$code,'severity'=>$group['state']==='pending'?'warning':'error','direction'=>$group['direction'],'count'=>$group['total'],'action'=>$action];
+        }
+        unset($group);
+        $active=$this->sql('SELECT issue_key,code,first_seen,last_seen,occurrences FROM {b}issues ORDER BY first_seen LIMIT 100');
+        foreach ($active as $issue) {
+            $issues[]=['code'=>$issue['code'],'severity'=>'error','record'=>$issue['issue_key'],'age_seconds'=>max(0,$now-(int)$issue['first_seen']),'occurrences'=>(int)$issue['occurrences'],
+                'action'=>$issue['code']==='capture_failed'?'Inspect this record and the capture notice; correct its unsupported or invalid fields. A successful recapture clears this issue.':'Check peer HTTPS availability and shared configuration; a successful peer wake clears this issue.'];
+        }
+        return ['ok'=>!$issues,'mode'=>$mode,'worker_age_seconds'=>$workerAge,'queue'=>$queue,'issues'=>$issues];
     }
 
     public function report(): array
