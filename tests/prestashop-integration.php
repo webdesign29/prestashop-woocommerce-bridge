@@ -167,3 +167,14 @@ expect(count($linked)===1 && (int)$linked[0]['id_image']===(int)$fixtureImage->i
 $roundImages=$e->adapter->product((int)$imageProductMap['local_id']); expect(count($roundImages['variants'][0]['images'])===1,'Combination image export failed');
 echo "PASS: native combination image association and export using cached media fixture\n";
 $config['mode']='disabled'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+
+$config['mode']='live'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+$commercial=$extended; $commercial['key']='woo:product:8890'; $commercial['inventory'][0]['key']=$commercial['key'];
+$commercial['purchase_price_net']='9.25'; $commercial['supplier']=['name'=>'Fixture Supplier','reference'=>'SUP-42']; $commercial['seo']=['title'=>'Fixture SEO title','description'=>'Fixture SEO description']; $commercial['archived']=true;
+$send(str_repeat('c1',16),'product',$commercial['key'],['base'=>'','hash'=>Engine::catalogHash($commercial),'data'=>$commercial]);
+$cm=$e->mapping($commercial['key']); expect($cm!==null,'Commercial archive import failed');
+$cp=new Product((int)$cm['local_id']); expect(!$cp->active && !$cp->available_for_order,'Archived product became sellable');
+$cr=$e->adapter->product((int)$cp->id); expect($cr['archived']===true && $cr['seo']['title']==='Fixture SEO title','Archive or SEO lost');
+expect((float)$cr['purchase_price_net']===9.25 && $cr['supplier']['reference']==='SUP-42','Supplier or purchasing price lost');
+echo "PASS: archived non-sellable product, native SEO, supplier reference and net purchasing price\n";
+$config['mode']='disabled'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));

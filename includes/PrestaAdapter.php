@@ -59,10 +59,29 @@ final class PrestaAdapter
     }
     private function extraFields($p): array
     {
-        return ['identifiers'=>['ean13'=>(string)$p->ean13,'upc'=>(string)$p->upc,'isbn'=>(string)$p->isbn,'mpn'=>(string)$p->mpn]];
+        $extra=['identifiers'=>['ean13'=>(string)$p->ean13,'upc'=>(string)$p->upc,'isbn'=>(string)$p->isbn,'mpn'=>(string)$p->mpn], 'purchase_price_net'=>(string)$p->wholesale_price];
+        if ($p instanceof \Product) {
+            $supplier=$p->id_supplier?new \Supplier((int)$p->id_supplier):null;
+            $extra['supplier']=['name'=>$supplier?(string)$supplier->name:'','reference'=>$supplier?(string)\ProductSupplier::getProductSupplierReference((int)$p->id,0,(int)$supplier->id):''];
+            $extra['seo']=['title'=>(string)$p->meta_title,'description'=>(string)$p->meta_description];
+        }
+        return $extra;
     }
     private function applyExtraFields($p,array $row): void
     {
+        if (isset($row['purchase_price_net'])) {
+            if (!is_numeric($row['purchase_price_net']) || (float)$row['purchase_price_net']<0) { throw new \RuntimeException('Invalid net purchasing cost.'); }
+            $p->wholesale_price=(string)$row['purchase_price_net'];
+        }
+        if ($p instanceof \Product && isset($row['seo'])) { $p->meta_title=$this->languages(strip_tags($row['seo']['title']??'')); $p->meta_description=$this->languages(strip_tags($row['seo']['description']??'')); }
+        if ($p instanceof \Product && isset($row['supplier'])) {
+            $name=trim((string)($row['supplier']['name']??'')); $p->id_supplier=0;
+            if ($name!=='') {
+                $id=(int)\Supplier::getIdByName($name);
+                if (!$id) { $supplier=new \Supplier(); $supplier->name=$name; $supplier->active=true; if (!$supplier->add()) { throw new \RuntimeException('Supplier creation failed.'); } $id=(int)$supplier->id; }
+                $p->id_supplier=$id;
+            }
+        }
         foreach (['ean13','upc','isbn','mpn'] as $field) {
             if (array_key_exists($field,$row['identifiers']??[])) { $p->$field=(string)$row['identifiers'][$field]; }
         }
@@ -112,6 +131,7 @@ final class PrestaAdapter
         if (strtolower((string) \Configuration::get('PS_WEIGHT_UNIT')) !== 'kg') { throw new \RuntimeException('PrestaShop weight unit must be kg or explicitly mapped.'); }
         $meta=json_decode($this->engine->mapping($key)['snapshot']??'{}',true)?:[];
         $data += $this->extraFields($p);
+        $data['archived']=!empty($meta['archived']) && !$p->active;
         if (isset($meta['identifiers']['gtin'])) { $data['identifiers']['gtin']=$meta['identifiers']['gtin']; }
         $factor=$this->dimensionFactor();
         $data['dimensions_cm']=['length'=>(string)($p->depth*$factor),'width'=>(string)($p->width*$factor),'height'=>(string)($p->height*$factor)];
@@ -274,14 +294,22 @@ final class PrestaAdapter
         $p->description = $this->languages(\Tools::purifyHTML($data['description']));
         $p->description_short = $this->languages(\Tools::purifyHTML($data['short_description']));
         $p->reference = $data['sku']; $p->price = $prices['regular']; $p->id_tax_rules_group = $prices['group'];
-        $p->active = $data['status'] === 'publish'; $p->is_virtual = (bool) $data['virtual']; $p->weight = (float) $data['weight_kg'];
+        $p->active = empty($data['archived']) && $data['status'] === 'publish'; $p->is_virtual = (bool) $data['virtual']; $p->weight = (float) $data['weight_kg'];
         $this->applyExtraFields($p,$data);
-        $p->available_for_order = true; $p->show_price = true;
+        $p->available_for_order = empty($data['archived']); $p->show_price = true;
         $categories = [];
         foreach ($data['categories'] as $path) { $categories[] = $this->category($path); }
         if (!$categories) { $categories[] = (int) \Configuration::get('PS_HOME_CATEGORY'); }
         $p->id_category_default = $categories[0];
         if (!$p->save()) { throw new \RuntimeException('Product save failed.'); }
+        if (isset($data['supplier']) && $p->id_supplier) {
+            $sid=(int)\ProductSupplier::getIdByProductAndSupplier((int)$p->id,0,(int)$p->id_supplier);
+            $supplierProduct=$sid?new \ProductSupplier($sid):new \ProductSupplier();
+            $supplierProduct->id_product=(int)$p->id; $supplierProduct->id_product_attribute=0; $supplierProduct->id_supplier=(int)$p->id_supplier;
+            $supplierProduct->product_supplier_reference=(string)($data['supplier']['reference']??'');
+            $supplierProduct->id_currency=(int)\Configuration::get('PS_CURRENCY_DEFAULT'); $supplierProduct->product_supplier_price_te=(float)$p->wholesale_price;
+            if (!$supplierProduct->save()) { throw new \RuntimeException('Supplier reference mapping failed.'); }
+        }
         $p->updateCategories($categories);
         $this->applyFeatures($p,$data['attributes']);
         if (isset($data['tags'])) {
@@ -336,6 +364,7 @@ final class PrestaAdapter
             $meta['specific_prices'][$row['key']] = (int) $specific->id;
         }
         if (isset($data['identifiers'])) { $meta['identifiers']=$data['identifiers']; }
+        $meta['archived']=!empty($data['archived']);
         $allImages=$data['images'];
         foreach ($data['variants'] as $row) {
             $meta['variant_extras'][$row['key']]=array_intersect_key($row,array_flip(['dimensions_cm']));

@@ -373,7 +373,9 @@ final class Engine
                 'identifiers'=>json_encode($data['identifiers']??[],JSON_UNESCAPED_UNICODE),
                 'dimensions_cm'=>json_encode($data['dimensions_cm']??[],JSON_UNESCAPED_UNICODE),
                 'features'=>json_encode(array_values(array_filter($data['attributes']??[],function($a){return empty($a['variation']);})),JSON_UNESCAPED_UNICODE),
-                'variant_images'=>array_sum(array_map(function($v){return count($v['images']??[]);},$data['variants']??[]))];
+                'variant_images'=>array_sum(array_map(function($v){return count($v['images']??[]);},$data['variants']??[])),
+                'archived'=>!empty($data['archived'])?'yes':'no','purchase_price_net'=>$data['purchase_price_net']??'unknown',
+                'supplier'=>json_encode($data['supplier']??[],JSON_UNESCAPED_UNICODE),'seo'=>json_encode($data['seo']??[],JSON_UNESCAPED_UNICODE)];
         }
         return $result;
     }
