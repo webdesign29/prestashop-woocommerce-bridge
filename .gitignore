@@ -1,0 +1,11 @@
+dist/
+vendor/
+.env*
+*.log
+*.sql
+*.sqlite*
+.phpunit.cache/
+*.pem
+*.key
+wp-config.php
+parameters.php
