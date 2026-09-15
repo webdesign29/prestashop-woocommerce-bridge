@@ -3,9 +3,11 @@
 if (!defined('_PS_VERSION_')) { exit; }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Engine.php';
+require_once __DIR__ . '/includes/OrderConflicts.php';
 require_once __DIR__ . '/includes/CustomerAccounts.php';
 require_once __DIR__ . '/includes/Refunds.php';
 require_once __DIR__ . '/includes/Suppliers.php';
+require_once __DIR__ . '/includes/Gallery.php';
 require_once __DIR__ . '/includes/DiagnosticsAdmin.php';
 require_once __DIR__ . '/includes/FieldMirrorAdmin.php';
 require_once __DIR__ . '/includes/PrestaAdapter.php';
@@ -18,7 +20,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.2.0';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.2.1';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '8.99.99'];
         parent::__construct();
@@ -31,7 +33,7 @@ class Wd29woobridge extends Module
             $adapter = new \WD29\Bridge\PrestaAdapter();
             $this->bridgeEngine = new \WD29\Bridge\Engine($adapter); $adapter->engine = $this->bridgeEngine;
         }
-        if (Configuration::get('WD29_BRIDGE_SCHEMA') !== '5') { $this->bridgeEngine->install(); Configuration::updateValue('WD29_BRIDGE_SCHEMA','5'); }
+        if (Configuration::get('WD29_BRIDGE_SCHEMA') !== '6') { $this->bridgeEngine->install(); Configuration::updateValue('WD29_BRIDGE_SCHEMA','6'); }
         return $this->bridgeEngine;
     }
     public function install()
@@ -118,14 +120,17 @@ class Wd29woobridge extends Module
                     $rules = json_decode((string)Tools::getValue('tax_rules', '{}'), true);
                     if (!is_array($rules)) { throw new RuntimeException('Tax mappings must be a JSON object.'); }
                     foreach ($rules as $taxRate=>$id) { if (!is_numeric($taxRate) || !is_numeric($id) || (int)$id<1) { throw new RuntimeException('Invalid tax-rule mapping.'); } }
-                    $config['tax_rules']=$rules; $config['native_customers']=(bool)Tools::getValue('native_customers',false);
+                    $config['tax_rules']=$rules; $config['native_customers']=(bool)Tools::getValue('native_customers',false); $config['sync_gallery_removals']=(bool)Tools::getValue('sync_gallery_removals',false);
                     Configuration::updateValue('WD29_BRIDGE_CONFIG', json_encode($config)); $message = 'Settings saved.';
+                } elseif ($action === 'restore_gallery') {
+                    $engine->adapter->restoreGallery(trim((string)Tools::getValue('gallery_record',''))); $message='Detached gallery images restored and product captured.';
                 } elseif ($action === 'save_mirror_fields') {
                     \WD29\Bridge\FieldMirrorAdmin::save($engine,(string)Tools::getValue('field_record'),(array)Tools::getValue('field_values',[]),(string)Tools::getValue('field_base'));
                     $message='Custom fields saved and captured.';
                 } elseif ($action === 'health') { $message = json_encode($engine->peer(['op' => 'health'])); }
                 elseif ($action === 'tick') { $engine->tick(false); $message = 'Queue processed; inspect results below.'; }
                 elseif ($action === 'retry') { $engine->retry(); $message = 'Failed events queued again.'; }
+                elseif ($action === 'resolve_order_upgrades') { $message = 'Equivalent order updates queued: ' . $engine->retryEquivalentOrderConflicts(); }
                 elseif ($action === 'resolve_catalog') { $engine->retryCatalogConflicts(); $message = 'Catalog conflicts queued with the selected priority.'; }
                 elseif ($action === 'seed_customers') { $message = 'Contacts captured: ' . $engine->seed('customer', max(0, (int) Tools::getValue('offset'))); }
                 elseif ($action === 'seed') { $message = 'Products captured: ' . $engine->seed('product', max(0, (int) Tools::getValue('offset'))); }
@@ -146,9 +151,11 @@ class Wd29woobridge extends Module
         $html .= '<label>Those source prices are</label><select name="display_basis"><option value="gross"' . (($config['display_basis'] ?? 'gross') === 'gross' ? ' selected' : '') . '>Tax inclusive</option><option value="net"' . (($config['display_basis'] ?? '') === 'net' ? ' selected' : '') . '>Tax exclusive</option></select>';
         $html .= '<label>Tax rate → tax rules group ID, JSON (example: {&quot;20&quot;:1})</label><input name="tax_rules" value="'.$this->escape(json_encode($config['tax_rules'] ?? new stdClass())).'">';
         $html .= '<label><input type="checkbox" name="native_customers" value="1"'.(!empty($config['native_customers'])?' checked':'').'> Create native accounts for registered source customers (independent passwords; no email merging)</label>';
+        $html .= '<label><input type="checkbox" name="sync_gallery_removals" value="1"'.(!empty($config['sync_gallery_removals'])?' checked':'').'> Detach imported gallery images removed on peer (recoverable; single shop only; files and manual images retained)</label>';
         $html .= '<button class="btn btn-primary" name="bridge_action" value="save">Save settings</button></form><hr>';
         $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '"><label>Batch offset</label><input name="offset" type="number" min="0" value="0">';
-        foreach (['health' => 'Test connection','seed' => 'Capture catalog', 'seed_customers'=>'Capture customer contacts','tick' => 'Process queue','retry' => 'Retry failures','resolve_catalog'=>'Retry catalog conflicts'] as $action => $label) { $html .= '<button class="btn btn-default" name="bridge_action" value="' . $action . '">' . $label . '</button> '; }
+        $html .= '<label>Mapped product or variation key</label><input name="gallery_record" placeholder="woo:product:123"><button class="btn btn-default" name="bridge_action" value="restore_gallery">Restore detached gallery images</button><p>Restores retained product images and, for a variation key, its image associations. Captures the product for synchronization.</p>';
+        foreach (['health' => 'Test connection','seed' => 'Capture catalog', 'seed_customers'=>'Capture customer contacts','tick' => 'Process queue','retry' => 'Retry failures','resolve_order_upgrades'=>'Retry equivalent order updates', 'resolve_catalog'=>'Retry catalog conflicts'] as $action => $label) { $html .= '<button class="btn btn-default" name="bridge_action" value="' . $action . '">' . $label . '</button> '; }
         $html .= '</form>'.\WD29\Bridge\DiagnosticsAdmin::render($engine).'<p>Last historical notice (see diagnostics for current state): ' . $this->escape(Configuration::get('WD29_BRIDGE_NOTICE')) . '</p><h3>Latest events</h3><table class="table"><thead><tr>';
         foreach (['seq','direction','kind','record_key','state','attempts','error','created_at'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
         $html .= '</tr></thead><tbody>';

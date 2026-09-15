@@ -24,6 +24,7 @@ final class Engine
     public function install(): void
     {
         foreach ([
+            'deleted_products' => 'record_key varchar(96) NOT NULL, deleted_at bigint NOT NULL, PRIMARY KEY(record_key)',
             'account_links' => 'record_key varchar(96) NOT NULL, native_id bigint unsigned NOT NULL, PRIMARY KEY(record_key), UNIQUE KEY native_account(native_id)',
             'issues' => 'issue_key varchar(96) NOT NULL, code varchar(32) NOT NULL, first_seen bigint NOT NULL, last_seen bigint NOT NULL, occurrences int NOT NULL DEFAULT 1, PRIMARY KEY(issue_key)',
             'order_lines' => 'order_key varchar(96) NOT NULL, line_key varchar(96) NOT NULL, native_id bigint unsigned NOT NULL, PRIMARY KEY(order_key,line_key), UNIQUE KEY native_line(native_id)',
@@ -88,6 +89,11 @@ final class Engine
     public function capture(string $kind, int $id): void
     {
         if (!$this->enabled() || ($kind === 'product' && $this->catalogApplying) || ($kind === 'order' && $this->orderApplying)) { return; }
+        if ($kind==='product' && method_exists($this->adapter,'productExists')) {
+            $known=$this->sql("SELECT * FROM {b}map WHERE kind='product' AND local_id=?",[$id])[0]??null;
+            if ($known && $this->productDeleted($known['record_key'])) { return; }
+            if ($known && strpos($known['record_key'],$this->adapter->site().':product:')===0 && !$this->adapter->productExists($id)) { $this->captureProductDeletion($known); return; }
+        }
         $lock = 'wd29_capture_' . sha1($this->table . $kind . ':' . $id);
         $locked = false;
         try {
@@ -119,6 +125,49 @@ final class Engine
         } finally {
             if ($locked) { $this->sql('SELECT RELEASE_LOCK(?)', [$lock]); }
         }
+    }
+
+    private function productDeleted(string $key): bool
+    {
+        return (bool)$this->sql('SELECT record_key FROM {b}deleted_products WHERE record_key=?',[$key]);
+    }
+
+    /** Missing originals are archived remotely from their last captured catalog, never reconstructed. */
+    public function scanDeletedProducts(): void
+    {
+        if (!$this->enabled() || !method_exists($this->adapter,'productExists')) { return; }
+        $offset=$this->adapter->scanOffset('known_products');
+        $rows=$this->sql("SELECT * FROM {b}map WHERE kind='product' AND record_key LIKE ? ORDER BY record_key LIMIT ".max(0,(int)$offset).",10",[$this->adapter->site().':product:%']);
+        foreach ($rows as $row) {
+            if (!$this->productDeleted($row['record_key']) && !$this->adapter->productExists((int)$row['local_id'])) { $this->captureProductDeletion($row); }
+        }
+        $this->adapter->saveScanOffset('known_products',count($rows)<10?0:$offset+10);
+    }
+
+    private function captureProductDeletion(array $map): void
+    {
+        $key=$map['record_key'];
+        if (strpos($key,$this->adapter->site().':product:')!==0 || $this->productDeleted($key)) { return; }
+        $lock='wd29_capture_'.sha1($this->table.'product:'.$map['local_id']);
+        if ((int)($this->sql('SELECT GET_LOCK(?,5) AS acquired',[$lock])[0]['acquired']??0)!==1) { $this->recordIssue('deletion:'.$map['local_id'],'deletion_busy'); return; }
+        try {
+            if ($this->productDeleted($key) || $this->adapter->productExists((int)$map['local_id'])) { return; }
+            $snapshot=$this->sql("SELECT payload FROM {b}queue WHERE direction='out' AND kind='product' AND record_key=? ORDER BY seq DESC LIMIT 1",[$key])[0]??null;
+            $payload=$snapshot?json_decode($snapshot['payload'],true):null; $data=$payload['data']??null;
+            if (!is_array($data) || ($data['key']??'')!==$key || ($payload['hash']??'')!==self::catalogHash($data)) {
+                $this->recordIssue('deletion:'.$map['local_id'],'deletion_snapshot_missing'); return;
+            }
+            $data['archived']=true; $data['source_deleted']=true; $hash=self::catalogHash($data);
+            $this->sql('START TRANSACTION');
+            $this->sql("UPDATE {b}queue SET state='ignored',error='Superseded by original product deletion.' WHERE direction='out' AND kind='product' AND record_key=? AND state IN ('pending','failed','conflict')",[$key]);
+            $this->enqueue('out','product',$key,['base'=>$map['fingerprint'],'hash'=>$hash,'data'=>$data]);
+            $this->sql('INSERT IGNORE INTO {b}deleted_products (record_key,deleted_at) VALUES (?,?)',[$key,time()]);
+            $this->sql('UPDATE {b}map SET fingerprint=?,local_hash=? WHERE record_key=?',[$hash,$hash,$key]);
+            $this->sql('COMMIT');
+            $this->resolveIssue('deletion:'.$map['local_id']); $this->resolveIssue('capture:product:'.$map['local_id']);
+        } catch (\Throwable $error) {
+            $this->sql('ROLLBACK'); $this->recordIssue('deletion:'.$map['local_id'],'deletion_failed');
+        } finally { $this->sql('SELECT RELEASE_LOCK(?)',[$lock]); }
     }
 
     public function captureStock(string $key, $quantity): void
@@ -206,6 +255,7 @@ final class Engine
         if ((int) ($row['acquired'] ?? 0) !== 1) { return; }
         $workerOutcome='failed'; $this->adapter->workerStatus('running');
         try {
+            $this->scanDeletedProducts();
             // Reconcile bounded pages as well as hooks: recovers missed callbacks and scheduled prices.
             foreach (['product','order','customer'] as $kind) {
                 $offset=$this->adapter->scanOffset($kind);
@@ -217,6 +267,7 @@ final class Engine
             foreach ($contacts as $contact) { $this->capture('customer',(int)$contact['id']); }
             $this->adapter->saveScanOffset('known_contacts',count($contacts)<10?0:$offset+10);
             if (($this->config()['mode'] ?? '') === 'live') {
+                $this->supersedeDeletedCatalog();
                 $this->supersedeUnmappedCatalog();
                 $events = $this->ready('in');
                 foreach ($events as $event) { $this->apply($event); }
@@ -281,7 +332,32 @@ final class Engine
                 if (($data['key'] ?? '') !== $key) { throw new \RuntimeException('Payload identity mismatch.'); }
                 $hash = $kind === 'product' ? self::catalogHash($data) : Protocol::fingerprint($data);
                 if (($payload['hash'] ?? '') !== $hash) { throw new \RuntimeException('Payload hash mismatch.'); }
-                if ($map && $map['fingerprint'] !== '' && $map['fingerprint'] !== ($payload['base'] ?? '') && $map['fingerprint'] !== $hash) {
+                if ($kind==='product') {
+                    $sourceDeleted=$data['source_deleted']??false;
+                    if (!is_bool($sourceDeleted)) { throw new \RuntimeException('Invalid source deletion marker.'); }
+                    if ($sourceDeleted) {
+                        if (strpos($key,($this->adapter->site()==='woo'?'ps':'woo').':product:')!==0 || empty($data['archived'])) { throw new \RuntimeException('Only the original product source can declare permanent deletion.'); }
+                        if (!$this->productDeleted($key)) {
+                            if ($map) {
+                                if (!method_exists($this->adapter,'productExists') || !method_exists($this->adapter,'archiveProduct')) { throw new \RuntimeException('Product archiving adapter is unavailable.'); }
+                                if ($this->adapter->productExists((int)$map['local_id'])) {
+                                    $this->catalogApplying=true; $this->adapter->archiveProduct((int)$map['local_id']);
+                                }
+                            }
+                            $this->sql('INSERT IGNORE INTO {b}deleted_products (record_key,deleted_at) VALUES (?,?)',[$key,time()]);
+                            if ($map) { $this->sql('UPDATE {b}map SET fingerprint=?,local_hash=? WHERE record_key=?',[$hash,$hash,$key]); }
+                        }
+                        $this->sql("UPDATE {b}queue SET state='applied',error='' WHERE seq=?",[$event['seq']]);
+                        $this->sql('COMMIT'); return;
+                    }
+                    if ($this->productDeleted($key) || ($map && strpos($key,$this->adapter->site().':product:')===0 && method_exists($this->adapter,'productExists') && !$this->adapter->productExists((int)$map['local_id']))) {
+                        $this->sql("UPDATE {b}queue SET state='ignored',error='Original product was permanently deleted; stale catalog update ignored.' WHERE seq=?",[$event['seq']]);
+                        $this->sql('COMMIT');
+                        if ($map && strpos($key,$this->adapter->site().':product:')===0 && !$this->productDeleted($key)) { $this->captureProductDeletion($map); }
+                        return;
+                    }
+                }
+                if ($map && $map['fingerprint'] !== '' && $map['fingerprint'] !== ($payload['base'] ?? '') && $map['fingerprint'] !== $hash && !($kind==='order' && $this->equivalentOrderAugmentation($data,$map))) {
                     $policy = $kind === 'product' ? ($this->config()['conflict_policy'] ?? 'review') : 'review';
                     if ($policy === $this->adapter->site()) {
                         $this->sql("UPDATE {b}queue SET state='ignored',error='Local catalog priority applied.' WHERE seq=?", [$event['seq']]);
@@ -330,6 +406,18 @@ final class Engine
             [$attempts, time() + min(3600, 30 * (2 ** min(7, $attempts))), $attempts >= 8 ? 'failed' : 'pending', $message, $event['seq']]);
     }
 
+    private function supersedeDeletedCatalog(): void
+    {
+        // An authoritative deletion must not wait forever behind an invalid/conflicting
+        // older catalog snapshot. Stock deltas retain their own ordering and are untouched.
+        $rows=$this->sql("SELECT * FROM {b}queue WHERE direction='in' AND kind='product' AND state='pending' AND payload LIKE ? ORDER BY seq DESC LIMIT 100",['%"source_deleted":true%']);
+        foreach ($rows as $row) {
+            $payload=json_decode($row['payload'],true); $data=$payload['data']??[];
+            if (($data['source_deleted']??false)!==true || empty($data['archived']) || ($data['key']??'')!==$row['record_key'] || strpos($row['record_key'],($this->adapter->site()==='woo'?'ps':'woo').':product:')!==0 || ($payload['hash']??'')!==self::catalogHash($data)) { continue; }
+            $this->sql("UPDATE {b}queue SET state='ignored',error='Superseded by original product deletion.' WHERE direction='in' AND kind='product' AND record_key=? AND seq<? AND state IN ('pending','failed','conflict')",[$row['record_key'],(int)$row['seq']]);
+        }
+    }
+
     private function supersedeUnmappedCatalog(): void
     {
         // Initial imports use the newest received full snapshot. Mapped stock is never rebased.
@@ -350,6 +438,56 @@ final class Engine
         $this->supersedeUnmappedCatalog();
         // Conflicts require reviewing and editing the source; they are never automatically overwritten.
         $this->sql("UPDATE {b}queue SET state='pending',attempts=0,next_try=0 WHERE state IN ('failed','pending')");
+    }
+
+    /** Only empty new fields / source line identity additions can bypass an upgrade conflict. */
+    private function equivalentOrderAugmentation(array $data, array $map): bool
+    {
+        if (!class_exists(OrderConflicts::class) || !method_exists($this->adapter,'orderConflictSnapshot')) { return false; }
+        try {
+            return OrderConflicts::equivalentAugmentation($this->adapter->orderConflictSnapshot((int)$map['local_id']),$data);
+        } catch (\Throwable $error) { return false; }
+    }
+
+    /** Operational comparison without customer details or custom-field values. */
+    public function orderConflictReport(): array
+    {
+        $rows=[];
+        foreach ($this->sql("SELECT seq,record_key,payload FROM {b}queue WHERE direction='in' AND kind='order' AND state='conflict' ORDER BY seq LIMIT 100") as $event) {
+            $payload=json_decode($event['payload'],true); $data=$payload['data']??null; $map=$this->mapping($event['record_key']);
+            $row=['event'=>(int)$event['seq'],'order'=>$event['record_key'],'local'=>'Unavailable','incoming'=>'Unavailable','resolution'=>'Manual review required'];
+            if (is_array($data)) {
+                $summary=function(array $d): string { return (string)($d['total']??'?').' '.(string)($d['currency']??'?').' / '.(string)($d['status']??'?').' / '.count($d['items']??[]).' lines'; };
+                $row['incoming']=$summary($data);
+                try {
+                    if (!$map) { throw new \RuntimeException('Missing mapping.'); }
+                    $native=$this->adapter->orderConflictSnapshot((int)$map['local_id']); $row['local']=$summary($native);
+                    if (($data['key']??'')===$event['record_key'] && ($payload['hash']??'')===Protocol::fingerprint($data) && $this->equivalentOrderAugmentation($data,$map)) { $row['resolution']='Equivalent technical upgrade; safe retry available'; }
+                    else {
+                        $different=[];
+                        foreach (['status','source_status','total','currency','items','shipping_net','shipping_tax','discount','tax','refunds','custom_fields'] as $field) {
+                            if (json_encode($native[$field]??null)!==json_encode($data[$field]??null)) { $different[]=$field; }
+                        }
+                        $row['resolution']='Review differences: '.($different?implode(', ',$different):'other order details');
+                    }
+                } catch (\Throwable $error) { $row['resolution']='Native order differs from mirror snapshot or is unavailable; review on originating store'; }
+            }
+            $rows[]=$row;
+        }
+        return $rows;
+    }
+
+    public function retryEquivalentOrderConflicts(): int
+    {
+        $count=0;
+        foreach ($this->sql("SELECT seq,record_key,payload FROM {b}queue WHERE direction='in' AND kind='order' AND state='conflict' ORDER BY seq LIMIT 100") as $event) {
+            $payload=json_decode($event['payload'],true); $data=$payload['data']??null; $map=$this->mapping($event['record_key']);
+            if (!is_array($data) || !$map || ($data['key']??'')!==$event['record_key'] || ($payload['hash']??'')!==Protocol::fingerprint($data)) { continue; }
+            if (!$this->equivalentOrderAugmentation($data,$map)) { continue; }
+            // Application repeats the native guard within its transaction before accepting it.
+            $this->sql("UPDATE {b}queue SET state='pending',attempts=0,next_try=0,error='' WHERE seq=? AND state='conflict'",[$event['seq']]); $count++;
+        }
+        return $count;
     }
 
     public function retryCatalogConflicts(): void
@@ -523,7 +661,7 @@ final class Engine
         $active=$this->sql('SELECT issue_key,code,first_seen,last_seen,occurrences FROM {b}issues ORDER BY first_seen LIMIT 100');
         foreach ($active as $issue) {
             $issues[]=['code'=>$issue['code'],'severity'=>'error','record'=>$issue['issue_key'],'age_seconds'=>max(0,$now-(int)$issue['first_seen']),'occurrences'=>(int)$issue['occurrences'],
-                'action'=>$issue['code']==='capture_failed'?'Inspect this record and the capture notice; correct its unsupported or invalid fields. A successful recapture clears this issue.':'Check peer HTTPS availability and shared configuration; a successful peer wake clears this issue.'];
+                'action'=>strpos($issue['code'],'deletion_')===0?'A source product is missing. Review its last captured catalog snapshot and database availability; keep the original mapping. The bridge will retry archiving and will not recreate the source.':($issue['code']==='capture_failed'?'Inspect this record and the capture notice; correct its unsupported or invalid fields. A successful recapture clears this issue.':'Check peer HTTPS availability and shared configuration; a successful peer wake clears this issue.')];
         }
         return ['ok'=>!$issues,'mode'=>$mode,'worker_age_seconds'=>$workerAge,'queue'=>$queue,'issues'=>$issues];
     }

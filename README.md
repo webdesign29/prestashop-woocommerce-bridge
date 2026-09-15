@@ -132,4 +132,14 @@ Validation: native WooCommerce/PrestaShop suites plus `WD29_WP_ROOT=/path/to/dis
 
 Validated with native Woo/PS integration suites, real HPOS storage, free ACF, supplier/account/refund fixtures, MySQL rollback/replay/retry/worker-lock tests, and cross-store concurrent stock movements. The cross-store test uses signed file bundles and native PS adjustments; it is not a real KerAwen cash-register transaction or an HTTPS end-to-end checkout.
 
-Remaining: supported KerAwen API contract for loyalty/redemption/procurement/private fields; real POS acceptance tests; hosting scheduler activation; ACF PRO native tests and unsupported field types; shared reservation for simultaneous last-unit sales; advanced catalog types (packs, protected downloads, multistore), destructive gallery/product deletion semantics and full fiscal/payment refund workflows. Ordinary asynchronous stock synchronization alone cannot prevent simultaneous last-unit overselling.
+Remaining: supported KerAwen API contract for loyalty/redemption/procurement/private fields; real POS acceptance tests; hosting scheduler activation; ACF PRO native tests and unsupported field types; shared reservation for simultaneous last-unit sales; advanced catalog types (packs, protected downloads, multistore), full fiscal/payment refund workflows (recoverable removal behavior is described in 0.2.1 below). Ordinary asynchronous stock synchronization alone cannot prevent simultaneous last-unit overselling.
+
+
+## Version 0.2.1 — recoverable removals and upgrade conflicts
+
+- Permanent deletion of a mapped source product archives its mirror without changing stock or deleting media. Persistent deletion markers prevent stale events from recreating the source. Missing capture snapshots are diagnosed explicitly.
+- Optional gallery removals detach only imported associations; files and manual images are retained. The default remains additive. See GALLERY.md for recovery and single-shop limits.
+- Order conflicts caused solely by empty newly introduced fields or added source line IDs can be retried through the settings panel. Native mirror totals, lines, addresses and financial state are checked first; actual business differences remain paused.
+- Woo ACF flexible-content layout translation and existing catalog taxonomy identities are supported through explicit local schemas. Native ACF PRO storage still requires its own acceptance run.
+
+See ACCEPTANCE.md for the exact remaining hosting, KerAwen and real transaction checks. Older scope sections above describe historical versions; the current custom-field contract is CUSTOM-FIELDS.md in the WooCommerce repository.

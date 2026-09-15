@@ -9,6 +9,9 @@ final class DiagnosticsAdmin
         $html='<h2>Operational diagnostics</h2><p>'.($d['ok']?'No actionable issue detected.':'Action is required; see the issues below.').'</p><table class="widefat table"><tr><th>Issue</th><th>Record / direction</th><th>Action</th></tr>';
         foreach ($d['issues'] as $row) { $html.='<tr><td>'.self::e($row['code']).'</td><td>'.self::e($row['record']??$row['direction']??'worker').'</td><td>'.self::e($row['action']).'</td></tr>'; }
         $html.='</table><p>Use the bundled server worker every minute. Health exit status is suitable for your hosting monitor. Stock synchronization is asynchronous: simultaneous last-unit sales need a shared reservation service.</p>';
+        $html.='<h2>Order conflicts</h2><p>Retry equivalent order updates only accepts new empty fields or source line identities when native values still match. Other differences remain paused.</p><table class="widefat table"><tr><th>Event</th><th>Order</th><th>Local total / status / lines</th><th>Incoming total / status / lines</th><th>Resolution</th></tr>';
+        foreach ($engine->orderConflictReport() as $row) { $html.='<tr>'; foreach ($row as $value) { $html.='<td>'.self::e($value).'</td>'; } $html.='</tr>'; }
+        $html.='</table>';
         $html.='<h2>Refund / credit-note records</h2><p>Source-owned audit records only. No second payment, stock restoration or fiscal document is created.</p><table class="widefat table"><tr><th>Order</th><th>Refund identity</th><th>Amount</th><th>Currency</th></tr>';
         foreach ($engine->sql("SELECT record_key,local_id FROM {b}map WHERE kind='order' ORDER BY record_key LIMIT 200") as $row) {
             try { $order=$engine->adapter->order((int)$row['local_id']); }

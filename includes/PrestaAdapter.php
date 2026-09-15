@@ -4,7 +4,48 @@ namespace WD29\Bridge;
 final class PrestaAdapter
 {
     public $engine;
+    public function restoreGallery(string $key): void
+    {
+        $lock=substr($this->prefix().'wd29_bridge_worker',0,64);
+        if ((int)($this->sql('SELECT GET_LOCK(?,5) AS acquired',[$lock])[0]['acquired']??0)!==1) { throw new \RuntimeException('Gallery is busy; retry.'); }
+        try {
+            $this->sql('START TRANSACTION'); $map=$this->engine->mapping($key); $combination=null;
+            if (!$map || !in_array($map['kind'],['product','variant'],true)) { throw new \RuntimeException('Choose a mapped product or variation key.'); }
+            if ($map['kind']==='variant') {
+                $combination=new \Combination((int)$map['local_id']);
+                if (!\Validate::isLoadedObject($combination)) { throw new \RuntimeException('Mapped variation no longer exists.'); }
+                $parents=$this->engine->sql("SELECT * FROM {b}map WHERE kind='product' AND local_id=?",[(int)$combination->id_product]);
+                if (!$parents) { throw new \RuntimeException('Variation parent is not mapped.'); } $map=$parents[0];
+            }
+            $product=new \Product((int)$map['local_id']);
+            if (!\Validate::isLoadedObject($product)) { throw new \RuntimeException('Mapped product no longer exists.'); }
+            $meta=json_decode($map['snapshot']??'{}',true,64,JSON_THROW_ON_ERROR)?:[];
+            Gallery::restore($product,$meta);
+            if ($combination) { Gallery::restoreCombination($combination,$meta); }
+            $this->engine->sql('UPDATE {b}map SET snapshot=? WHERE record_key=?',[Protocol::encode($meta),$map['record_key']]);
+            $this->sql('COMMIT'); $this->engine->capture('product',(int)$product->id);
+        } catch (\Throwable $error) { $this->sql('ROLLBACK'); throw $error; }
+        finally { $this->sql('SELECT RELEASE_LOCK(?)',[$lock]); }
+    }
+
     public function site(): string { return 'ps'; }
+    public function productExists(int $id): bool
+    {
+        return (bool)$this->sql('SELECT id_product FROM `'._DB_PREFIX_.'product` WHERE id_product=?',[$id]);
+    }
+    public function archiveProduct(int $id): void
+    {
+        $product=new \Product($id,false,$this->lang(),$this->shop());
+        if (!\Validate::isLoadedObject($product)) { throw new \RuntimeException('Mirror product no longer exists.'); }
+        $product->active=false; $product->available_for_order=false;
+        if (!$product->update()) { throw new \RuntimeException('Could not archive the mirror product.'); }
+        $map=$this->engine->sql("SELECT record_key,snapshot FROM {b}map WHERE kind='product' AND local_id=?",[$id])[0]??null;
+        if ($map) {
+            $metadata=json_decode($map['snapshot']??'{}',true)?:[]; $metadata['archived']=true;
+            $this->engine->sql('UPDATE {b}map SET snapshot=? WHERE record_key=?',[Protocol::encode($metadata),$map['record_key']]);
+        }
+    }
+
     public function prefix(): string { return _DB_PREFIX_; }
     public function config(): array { return json_decode((string) \Configuration::get('WD29_BRIDGE_CONFIG'), true) ?: ['mode' => 'disabled']; }
     public function workerStatus(?string $state=null): array
@@ -398,8 +439,16 @@ final class PrestaAdapter
             if (!array_key_exists('images',$row)) { continue; }
             $vm=$this->engine->mapping($row['key']); $ids=[];
             foreach ($row['images'] as $url) { $ids[]=(int)$meta['images'][hash('sha256',$url)]; }
-            $combination=new \Combination((int)$vm['local_id']); $combination->setImages($ids);
+            $combination=new \Combination((int)$vm['local_id']); Gallery::applyCombination($combination,$ids,$meta,!empty($this->config()['sync_gallery_removals']));
         }
+        $desiredImageIds=[]; foreach ($allImages as $url) { $desiredImageIds[]=(int)$meta['images'][hash('sha256',$url)]; }
+        // An omitted variant gallery is unchanged and still needs its images visible in this shop.
+        foreach ($data['variants'] as $row) {
+            if (array_key_exists('images',$row)) { continue; }
+            $vm=$this->engine->mapping($row['key']);
+            if ($vm) { foreach ($this->sql('SELECT id_image FROM `'._DB_PREFIX_.'product_attribute_image` WHERE id_product_attribute=?',[(int)$vm['local_id']]) as $imageRow) { $desiredImageIds[]=(int)$imageRow['id_image']; } }
+        }
+        Gallery::apply($p,$desiredImageIds,$meta,!empty($this->config()['sync_gallery_removals']));
         $this->engine->sql('UPDATE {b}map SET snapshot=? WHERE record_key=?', [Protocol::encode($meta), $data['key']]);
         return (int) $p->id;
     }
@@ -522,6 +571,48 @@ final class PrestaAdapter
         if (isset($map['snapshot'])) { $extras=json_decode($map['snapshot'],true)?:[]; if (isset($extras['custom_fields'])) { $data['custom_fields']=$extras['custom_fields']; } }
         return $data;
     }
+    /** Guard snapshot-backed mirrors before considering a schema-only conflict retry. */
+    public function orderConflictSnapshot(int $id): array
+    {
+        $data=$this->order($id);
+        if (strpos($data['key'],'woo:order:')!==0) { return $data; }
+        $map=$this->engine->mapping($data['key']);
+        $snapshot=json_decode($map['snapshot']??'',true);
+        if (!is_array($snapshot) || ($snapshot['key']??'')!==$data['key'] || !is_array($snapshot['items']??null)) { throw new \RuntimeException('Mirror snapshot missing; explicit order review required.'); }
+        $o=new \Order($id); $currency=new \Currency((int)$o->id_currency);
+        if ($o->module!=='wd29woobridge' || $currency->iso_code!==$snapshot['currency'] || (float)$o->total_paid_real!=0 || $o->valid || $o->invoice_number || Refunds::export($o)) { throw new \RuntimeException('Native mirror currency/payment/refund changed; explicit order review required.'); }
+        $decimals=(int)($currency->precision??2);
+        foreach (['total_paid_tax_incl'=>'total','total_shipping_tax_excl'=>'shipping_net'] as $native=>$field) { OrderConflicts::assertMoney($o->$native,$snapshot[$field]??null,$decimals); }
+        OrderConflicts::assertMoney($o->total_paid_tax_incl-$o->total_paid_tax_excl,$snapshot['tax'],$decimals);
+        OrderConflicts::assertMoney($o->total_shipping_tax_incl-$o->total_shipping_tax_excl,$snapshot['shipping_tax'],$decimals);
+        // Mirror lines already include Woo discounts; native PS discounts are intentionally zero.
+        foreach (['total_discounts','total_discounts_tax_incl','total_discounts_tax_excl'] as $field) { OrderConflicts::assertMoney($o->$field,0,$decimals); }
+        $customer=new \Customer((int)$o->id_customer);
+        OrderConflicts::assertAddress($this->address((int)$o->id_address_invoice,$customer->email),$snapshot['billing']);
+        $expectedShipping=empty($snapshot['shipping']['address_1'])?$snapshot['billing']:$snapshot['shipping'];
+        // PS guest mirrors use one customer's email for both stored addresses.
+        $expectedShipping['email']=$snapshot['billing']['email']??'';
+        OrderConflicts::assertAddress($this->address((int)$o->id_address_delivery,$customer->email),$expectedShipping);
+        $items=$o->getOrderDetailList();
+        if (count($items)!==count($snapshot['items'])) { throw new \RuntimeException('Native mirror line count changed; explicit order review required.'); }
+        $lineMap=[];
+        foreach ($this->engine->sql('SELECT line_key,native_id FROM {b}order_lines WHERE order_key=?',[$data['key']]) as $entry) { $lineMap[$entry['line_key']]=(int)$entry['native_id']; }
+        $sumNet=0.0; $sumGross=0.0;
+        foreach ($snapshot['items'] as $index=>$line) {
+            $item=$items[$index]; $lineKey=isset($line['line_id'])?'source:'.$line['line_id']:'legacy:'.$index;
+            if (($lineMap && (!isset($lineMap[$lineKey]) || $lineMap[$lineKey]!== (int)$item['id_order_detail'])) || $item['product_name']!==$line['name'] || (int)$item['product_quantity']!==(int)$line['quantity']) { throw new \RuntimeException('Native mirror line identity or quantity changed; explicit order review required.'); }
+            $actualProduct=(int)($item['product_attribute_id']?:$item['product_id']);
+            $productMap=!empty($line['product'])?$this->engine->mapping($line['product']):null;
+            if (($line['product']!==null && (!$productMap || $actualProduct!==(int)$productMap['local_id'])) || ($line['product']===null && $actualProduct!==0)) { throw new \RuntimeException('Native mirror product link changed; explicit order review required.'); }
+            OrderConflicts::assertMoney($item['total_price_tax_excl'],$line['net'],$decimals);
+            OrderConflicts::assertMoney($item['total_price_tax_incl']-$item['total_price_tax_excl'],$line['tax'],$decimals);
+            $sumNet+=(float)$line['net']; $sumGross+=(float)$line['net']+(float)$line['tax'];
+        }
+        OrderConflicts::assertMoney($o->total_products,$sumNet,$decimals);
+        OrderConflicts::assertMoney($o->total_products_wt,$sumGross,$decimals);
+        return $data;
+    }
+
     public function applyOrder(array $data, ?array $map): int
     {
         if (isset($data['refunds'])) { $data['refunds']=Refunds::validateOrder($data); }
