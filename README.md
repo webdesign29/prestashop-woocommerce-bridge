@@ -97,3 +97,23 @@ The primary supplier name/reference and the explicit net unit purchasing cost ma
 
 ### Stock availability policy (0.1.9)
 Catalog updates now refresh the PrestaShop ordering-out-of-stock policy for existing products, without resetting tracked quantities. The WooCommerce bridge panel exposes an explicit batched action to set unknown source-owned variation quantities to zero and disable backorders. Known quantities and PrestaShop-owned products are preserved; parent-managed inventory requires a separate allocation decision. Only use the action after choosing this inventory policy.
+
+
+## Product custom metadata and ACF (0.1.10)
+
+Configure the explicit allowlist in the WooCommerce bridge panel. Empty by default:
+
+```json
+[
+  {"id":"material_note","source":"meta","key":"material_note"},
+  {"id":"care_note","source":"acf","key":"field_your_local_key"}
+]
+```
+
+These mappings apply to products and variations, not order/customer metadata. Use stable unique transport IDs. ACF field definitions must already exist locally; use a field key for fields not yet saved. The bridge never inventories all metadata or ACF groups. WooCommerce single-value metadata supports JSON scalars and nested arrays (64 KiB per value, depth 8, 50 mappings). Native price/stock fields, bridge internals and credential-like keys are rejected. Only explicitly selected business metadata should be added.
+
+Supported ACF types: text, textarea, number, range, email, URL, true/false, select, checkbox, radio, button group, date, date/time, time and color. Values and local ACF references are written through WooCommerce metadata storage; native ACF reads are covered by integration tests. ACF must be active for an ACF mapping. Field definitions, defaults and validation hooks are not synchronized. Media, relationships, taxonomies, repeaters, groups, flexible content and other extension-specific types require dedicated adapters; their local IDs cannot be treated as cross-store identities.
+
+PrestaShop retains selected values privately in the bridge mapping snapshot and re-exports them unchanged on catalog edits. This does not create native PrestaShop features or KerAwen fields, or a custom field editor there. Existing conflict handling applies. Explicit missing-value markers propagate deletion; omitted IDs leave WooCommerce fields untouched. Removing an allowlist mapping does not delete local source metadata. WordPress scalar storage conventions apply; arrays preserve their JSON structure. Duplicate rows for one metadata key are not supported.
+
+Validation: native WooCommerce/PrestaShop suites plus `WD29_WP_ROOT=/path/to/disposable/wordpress php tests/custom-fields-integration.php` in the WooCommerce repository with official ACF installed (database must be wd29woo, domain woo.example.test). See [ACF field API](https://www.advancedcustomfields.com/resources/get_field_object/).

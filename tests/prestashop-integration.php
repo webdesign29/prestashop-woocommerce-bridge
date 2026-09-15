@@ -190,3 +190,19 @@ $send(str_repeat('d3',16),'stock','woo:variant:8991',['set_mode'=>true,'previous
 expect(!Product::isAvailableWhenOutOfStock(StockAvailable::outOfStock((int)$tm['local_id'],1)),'Existing product retained unlimited ordering after stock mode change');
 echo "PASS: existing variable switches from unlimited availability to managed zero without overselling\n";
 $config['mode']='disabled'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+
+$config['mode']='live'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+$transition['custom_fields']=['note'=>['present'=>true,'value'=>'Été'],'nested'=>['present'=>true,'value'=>['zero'=>0,'false'=>false]]];
+$transition['variants'][0]['custom_fields']=['choice'=>['present'=>true,'value'=>['a','b']]];
+$tm=$e->mapping($transition['key']);
+$send(str_repeat('e1',16),'product',$transition['key'],['base'=>$tm['fingerprint'],'hash'=>Engine::catalogHash($transition),'data'=>$transition]);
+$round=$e->adapter->product((int)$tm['local_id']);
+expect($round['custom_fields']===$transition['custom_fields'],'Custom product JSON not retained');
+expect($round['variants'][0]['custom_fields']===$transition['variants'][0]['custom_fields'],'Variation custom JSON not retained');
+$transition['custom_fields']['note']=['present'=>false,'value'=>null];
+$tm=$e->mapping($transition['key']);
+$send(str_repeat('e2',16),'product',$transition['key'],['base'=>$tm['fingerprint'],'hash'=>Engine::catalogHash($transition),'data'=>$transition]);
+$round=$e->adapter->product((int)$tm['local_id']);
+expect($round['custom_fields']['note']===['present'=>false,'value'=>null],'Custom field tombstone lost');
+echo "PASS: custom product/variant JSON, native re-export and deletion tombstones\n";
+$config['mode']='disabled'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));

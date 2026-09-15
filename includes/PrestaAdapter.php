@@ -131,6 +131,7 @@ final class PrestaAdapter
         if (strtolower((string) \Configuration::get('PS_WEIGHT_UNIT')) !== 'kg') { throw new \RuntimeException('PrestaShop weight unit must be kg or explicitly mapped.'); }
         $meta=json_decode($this->engine->mapping($key)['snapshot']??'{}',true)?:[];
         $data += $this->extraFields($p);
+        if (isset($meta['custom_fields'])) { $data['custom_fields']=$meta['custom_fields']; }
         $data['archived']=!empty($meta['archived']) && !$p->active;
         if (isset($meta['identifiers']['gtin'])) { $data['identifiers']['gtin']=$meta['identifiers']['gtin']; }
         $factor=$this->dimensionFactor();
@@ -365,10 +366,11 @@ final class PrestaAdapter
             $meta['specific_prices'][$row['key']] = (int) $specific->id;
         }
         if (isset($data['identifiers'])) { $meta['identifiers']=$data['identifiers']; }
+        if (isset($data['custom_fields'])) { $meta['custom_fields']=$data['custom_fields']; }
         $meta['archived']=!empty($data['archived']);
         $allImages=$data['images'];
         foreach ($data['variants'] as $row) {
-            $meta['variant_extras'][$row['key']]=array_intersect_key($row,array_flip(['dimensions_cm']));
+            $meta['variant_extras'][$row['key']]=array_replace($meta['variant_extras'][$row['key']]??[],array_intersect_key($row,array_flip(['dimensions_cm','custom_fields'])));
             foreach ($row['images']??[] as $url) { if (!in_array($url,$allImages,true)) { $allImages[]=$url; } }
         }
         foreach ($allImages as $index => $url) {
