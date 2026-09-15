@@ -1,145 +1,104 @@
-# WD29 PrestaShop → WooCommerce Bridge
+# WD29 PrestaShop Bridge
 
-Connecteur direct avec [le module partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
+Synchronisation directe **WooCommerce ↔ PrestaShop** : catalogue, stocks, commandes et contacts clients, avec webhooks signés et file d’attente persistante.
 
-Nom technique du module : **wd29woobridge**. Page : **Modules → WD29 WooCommerce Bridge → Configurer**. Point de réception fourni par `getModuleLink`, utilisable avec et sans réécriture d’URL.
+**Version : 0.2.2 · candidate à recette.** Ce dépôt contient le plugin PrestaShop ; installez également le [plugin partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
 
-## Fonctionnement
+[Télécharger les archives](https://github.com/webdesign29/prestashop-woocommerce-bridge/releases/tag/v0.2.2-rc.1) · [Exploitation et planificateur](OPERATIONS.md) · [Recette et limites](ACCEPTANCE.md)
 
-- Deux boutiques appairées directement en HTTPS, sans service intermédiaire.
-- Webhooks HMAC-SHA256, horodatage, identifiant de livraison et déduplication persistante.
-- File d’attente avec reprises, ordre de traitement par fiche et journal des erreurs.
-- Identités `woo:product:ID`, `ps:product:ID` et correspondances des déclinaisons. Les UGS vides ne servent jamais à fusionner des fiches.
-- Rapprochement initial par réunion des catalogues : les produits propres à chaque boutique sont conservés.
-- Produits simples et variables, noms, descriptions, catégories, attributs, prix et images.
-- Stock initial conservé ; mouvements suivants propagés par écarts, avec verrous et protection contre les doubles livraisons. Une disponibilité sans quantité reste une quantité inconnue.
-- Commandes copiées comme enregistrements natifs, sans nouvelle opération de paiement. Une commande miroir ne doit pas provoquer un deuxième mouvement de stock. Les modifications financières restent sur la boutique d’origine ; les statuts peuvent revenir vers celle-ci.
-- Conflits de catalogue : pause pour examen, priorité WooCommerce ou priorité PrestaShop, à régler pareil des deux côtés.
-- Contrôle périodique de pages de 10 produits et 10 commandes pour récupérer les hooks manqués. La fréquence dépend du cron et du volume du catalogue.
+## Aperçu de la configuration
 
-## État et limites
+![Configuration WD29 côté PrestaShop : indicateurs, réglages et rapports repliables](docs/screenshots/configuration.jpg)
 
-**Version candidate à recette, pas une certification KerAwen.** Les tests automatisés utilisent WordPress/WooCommerce et PrestaShop natifs, sans le module commercial KerAwen. Une recette sur les boutiques appairées reste nécessaire avant exploitation.
+*Capture de démonstration du composant réel de la version 0.2.2, rendu localement avec des données fictives et hors de l’administration hôte. Les domaines `example.test` sont fictifs ; le secret est vide. Aucun identifiant de connexion, jeton, compte client ou contenu de boutique réelle n’est utilisé. La sélection des champs est illustrative ; ce n’est pas une capture exhaustive du back-office.*
 
-Les cas suivants sont bloqués ou demandent une adaptation explicite : multiboutique, packs et téléchargements, variations génériques « toutes les tailles », stock mutualisé au niveau du parent WooCommerce, écotaxe, fiscalité sans correspondance, devises différentes et commandes dont les frais/remises ne correspondent pas aux lignes exportées. Les remboursements monétaires ne sont jamais exécutés par le connecteur. Les suppressions ne sont pas propagées automatiquement. La gestion des médias est additive côté PrestaShop ; les suppressions/remplacements complexes de galeries demandent une recette spécifique. Les métadonnées d’extensions tierces ne sont pas migrées automatiquement.
+Le panneau regroupe les indicateurs d’état, les réglages de connexion, les actions de maintenance et les rapports repliables. Les tableaux défilants et les badges d’état facilitent la lecture des événements. Les formulaires conservent leurs contrôles d’autorisation et de validation.
 
-Des prix dont la TVA est désactivée côté WooCommerce restent marqués « prix affiché, fiscalité non renseignée ». Le module PrestaShop demande alors la base HT/TTC, le taux et, si nécessaire, le groupe de règles fiscales. Aucun taux n’est déduit du nom d’un produit. L’import d’un produit PrestaShop taxé vers un WooCommerce sans taxes configurées est bloqué.
+## Ce qui est synchronisé
 
-## Mise en service
+| Domaine | Comportement actuel |
+| --- | --- |
+| Catalogue | Produits simples et variables, descriptions, catégories, attributs, caractéristiques, marques/fabricant, étiquettes, prix et déclinaisons. Une marque WooCommerce maximum correspond au fabricant PrestaShop. |
+| Identifiants et présentation | EAN/UPC/ISBN/MPN, identifiants complémentaires, dimensions converties via les centimètres, images de produits et déclinaisons, titres/descriptions SEO selon les correspondances prises en charge. |
+| Stocks | Quantité initiale conservée, puis propagation des mouvements par écarts, avec verrous et déduplication. Un stock inconnu ne devient pas automatiquement zéro. |
+| Commandes | Enregistrements natifs miroirs, totaux et lignes historiques, liens aux produits réparés ultérieurement si nécessaire, identités de lignes stables et correspondances de statuts. Les opérations financières restent sur la boutique d’origine. |
+| Clients | Répertoire privé de contacts inscrits et invités, coordonnées et adresses source. Comptes natifs facultatifs, désactivés par défaut, avec mot de passe indépendant et sans fusion automatique par e-mail. |
+| Métadonnées Woo / ACF | Liste explicite de champs autorisés et portées produit, déclinaison, commande ou client selon le type. Métadonnées de commandes HPOS prises en charge ; définitions ACF locales requises. [Contrat détaillé](https://github.com/webdesign29/woocommerce-prestashop-bridge/blob/main/CUSTOM-FIELDS.md). |
+| Champs côté PrestaShop | Conservation privée et éditeur des valeurs déjà reçues pour produits, déclinaisons et commandes, avec protection contre les modifications concurrentes. Cela ne crée pas de champs KerAwen. |
+| Fournisseurs | Fournisseur principal, références, coût d’achat HT et relations fournisseurs supplémentaires par produit/déclinaison. [Détails](SUPPLIERS.md). |
+| Remboursements / avoirs | Copie du registre de la source pour consultation. Aucun second remboursement monétaire, document fiscal ou mouvement de remise en stock n’est déclenché. |
+| Suppressions et images | Suppression définitive d’un produit source déjà lié : archivage du miroir, sans supprimer ses médias ni modifier son stock. Retrait des images importées facultatif et réversible depuis le panneau. [Galeries et restauration](GALLERY.md). |
 
-1. Installer les deux archives de la même version, puis ouvrir leurs pages de configuration.
-2. Définir une même clé aléatoire d’au moins 32 caractères sur les deux sites. La conserver uniquement dans les configurations privées des boutiques. Ne jamais la publier dans GitHub, un ticket ou un journal.
-3. Copier l’URL de webhook de chaque boutique dans la configuration de l’autre. Passer les deux en **audit** et utiliser « Test connection ».
-4. Confirmer les correspondances fiscales et la priorité en cas de conflit. Les deux boutiques doivent utiliser la même priorité.
-5. Capturer les deux catalogues par lots, puis les commandes si leur historique doit être repris. Les commandes conservent les lignes historiques même lorsque leur produit est indisponible ; le lien au catalogue est réparé dès que le produit est synchronisé.
-6. Examiner les erreurs et les quantités non suivies, puis activer **live** sur les deux sites seulement après recette. Le mode audit reçoit les événements mais ne modifie pas les fiches, stocks et commandes à partir des événements entrants.
-7. Configurer un vrai cron WordPress, idéalement chaque minute. WP-Cron dépend autrement des visites. WooCommerce déclenche aussi le traitement du module PrestaShop, y compris lorsque sa vitrine est en maintenance ; seul le point de réception signé bénéficie de cette exception.
-8. Vérifier une création, une modification, une déclinaison, une vente, une annulation et la répétition du même webhook. Vérifier aussi la caisse réelle si KerAwen est utilisé.
+### Identités et conflits
 
-La désactivation conserve les correspondances et l’historique de déduplication. Ne pas réutiliser ces tables pour une autre paire de boutiques. Les événements contiennent des données de commande dans la base privée du site ; leurs contenus ne sont pas inclus dans le journal synthétique.
+Chaque fiche conserve une identité d’origine, par exemple `woo:product:1001`. Les UGS vides et les adresses e-mail ne servent jamais à fusionner automatiquement des fiches. Le rapprochement initial conserve les produits propres à chaque boutique.
 
-## Développement et tests
+Pour le catalogue, choisissez une pause pour examen ou une priorité WooCommerce/PrestaShop, identique des deux côtés. Les conflits réels de commandes restent à examiner. L’action **Retry equivalent order updates** ne reprend que les ajouts techniques équivalents — champs nouveaux vides ou identifiants de lignes — après vérification des valeurs natives du miroir.
 
-`php tests/protocol.php` vérifie les signatures, l’expiration, l’altération des messages, les identités et les quantités inconnues.
+Les contacts se modifient sur leur boutique d’origine. Les mots de passe, rôles et consentements marketing existants ne sont pas transférés. La suppression d’un profil source efface ses coordonnées du répertoire miroir, sans effacer les adresses historiques des commandes ni supprimer son compte natif.
 
-Les tests natifs refusent de démarrer hors des bases jetables `wd29woo` et `wd29ps`, sur les domaines de test `woo.example.test` et `ps.example.test`. Ils vident les tables du connecteur **uniquement dans ces installations jetables**. Ils ne doivent jamais être lancés sur une boutique client.
+## Installation et mise en service
 
-Le protocole et le moteur communs se trouvent dans `includes/Protocol.php` et `includes/Engine.php` dans les deux dépôts. Ces fichiers doivent rester identiques pour une même version du protocole. `python3 scripts/package.py` construit une archive dans `dist/` à partir d’une liste de fichiers autorisés ; les tests, les réglages et les secrets ne sont pas embarqués.
+Installez `wd29woobridge-0.2.2.zip` depuis le gestionnaire de modules. Ouvrez **Modules → WD29 WooCommerce Bridge → Configurer**. Le dossier technique du module doit rester `wd29woobridge`.
 
-## Licence
+1. Installez les deux plugins de la même version.
+2. Configurez une même clé aléatoire d’au moins 32 caractères dans les réglages privés des deux boutiques. Ne la placez jamais dans un dépôt, une capture ou une URL.
+3. Copiez le webhook affiché par chaque plugin dans le réglage de l’autre. Utilisez HTTPS, puis passez les deux boutiques en **audit** et lancez **Test connection**.
+4. Vérifiez la fiscalité et la priorité du catalogue. La saisie des prix WooCommerce peut rester en **TTC**, avec une TVA correctement configurée. Une fiscalité manquante demande une base HT/TTC et un taux explicites ; le connecteur ne les devine pas.
+5. Capturez les catalogues, puis les contacts et les historiques de commandes nécessaires. Les actions de capture travaillent par lots ; examinez les erreurs, les stocks inconnus et les lignes sans lien.
+6. Effectuez la [recette](ACCEPTANCE.md), puis activez le mode **live**. En audit, les événements entrants sont reçus mais ne sont pas appliqués aux fiches, stocks et commandes.
+7. Installez et vérifiez le worker sur l’hébergement, idéalement chaque minute sur chaque boutique, suivant [OPERATIONS.md](OPERATIONS.md). La présence du fichier CLI n’installe pas un planificateur. WP-Cron seul dépend des visites.
 
-GPL-2.0-or-later. Voir `LICENSE`.
+Les statuts PrestaShop inconnus sont créés dans WooCommerce avec leur identifiant et libellé d’origine. Le panneau WordPress permet de les associer à un statut WooCommerce existant, sans transformer cette correspondance en opération de paiement.
 
-### Test natif de ce dépôt
+## Sécurité et exploitation
+
+- Échanges HTTPS signés HMAC-SHA256, horodatage et protection contre le rejeu par identifiant de livraison.
+- Files persistantes, reprises progressives, ordre de traitement par fiche et diagnostics. Une réception réussie ne garantit pas encore l’application native : vérifiez les deux panneaux.
+- Configurations, données clients, correspondances et contenus des événements restent dans les bases privées des boutiques. Ne publiez pas d’export de ces tables.
+- La désactivation conserve les correspondances et l’historique de déduplication. Ne réutilisez pas ces tables pour une autre paire de boutiques.
+- N’activez les comptes natifs et les retraits de galeries qu’après avoir choisi ces comportements. Aucun rapprochement automatique avec un compte utilisant déjà le même e-mail.
+
+## Limites et validation
+
+**Ce connecteur n’est pas une certification KerAwen.** Les tests natifs WooCommerce/PrestaShop et les scénarios locaux de concurrence, rejeu et annulation ne remplacent pas une vente et un retour réalisés dans la caisse KerAwen réelle.
+
+- Fidélité, cartes cadeaux, achats et champs privés KerAwen : contrat d’API pris en charge et recette dédiée nécessaires.
+- Les mouvements de stock asynchrones convergent, mais ne réservent pas atomiquement le dernier article vendu simultanément sur les deux boutiques.
+- Multiboutique, packs, téléchargements protégés, variantes génériques et stock mutualisé au parent demandent des adaptations spécifiques. Les quantités mixtes suivies/inconnues doivent être harmonisées.
+- Écotaxe, devises incompatibles, fiscalité non mappée et écarts de frais/remises non expliqués peuvent bloquer une fiche ou une commande.
+- Les définitions ACF ne sont pas copiées. Groupes, médias, relations vers produits synchronisés, taxonomies de catalogue existantes et traductions de structures complexes sont pris en charge selon le [contrat ACF](https://github.com/webdesign29/woocommerce-prestashop-bridge/blob/main/CUSTOM-FIELDS.md). Le stockage natif des champs **ACF PRO** reste à valider avec ACF PRO ; les tests de traduction utilisent des schémas synthétiques.
+- La suppression/désactivation des comptes natifs n’est pas propagée automatiquement. Les remboursements financiers restent exécutés sur leur plateforme d’origine.
+
+Voir [ACCEPTANCE.md](ACCEPTANCE.md) pour la liste des vérifications à effectuer dans l’environnement cible.
+
+## Développement
+
+```sh
+php tests/protocol.php
+python3 scripts/package.py
+```
+
+Test natif, **uniquement dans l’installation jetable prévue** :
 
 ```sh
 WD29_PS_ROOT=/chemin/prestashop php tests/prestashop-integration.php
 ```
 
-### Stock des déclinaisons
+Les suites natives refusent les bases et domaines autres que leurs fixtures `wd29woo` / `wd29ps` et `woo.example.test` / `ps.example.test`. Certaines suites réinitialisent les tables du connecteur dans ces fixtures. Ne les lancez jamais sur une boutique client.
 
-PrestaShop partage une politique de commande hors stock pour toutes les déclinaisons. Les produits WooCommerce mélangeant des quantités suivies et des disponibilités sans quantité sont bloqués avant création pour éviter de rendre commandable une déclinaison à zéro. Harmoniser leur suivi de quantité avant import. Le prix de base des parents variables sans prix propre est calculé à partir des prix de leurs déclinaisons.
+Les fichiers communs `includes/Protocol.php` et `includes/Engine.php` doivent rester identiques entre les deux dépôts. Le paquet ZIP est construit par liste explicite ; les fixtures et captures de documentation ne sont pas du code à installer sur les boutiques.
 
-### Champs complémentaires (0.1.3)
+### Reproduire la capture sans données privées
 
-Les marques WooCommerce sont reliées au fabricant PrestaShop (une marque maximum), et les étiquettes sont synchronisées dans la langue par défaut. Les champs absents des anciens événements ne suppriment pas ces valeurs. Les groupes ACF, les métadonnées privées des extensions, les champs de caisse KerAwen et les modèles SEO ne sont pas copiés automatiquement : ils demandent une correspondance explicite et une recette.
-
-Une remise globale PrestaShop déclarée, dont le montant explique exactement l’écart du total, est conservée dans la commande miroir WooCommerce sous une ligne négative « Source order discount ». Les autres écarts restent bloqués.
-
-### Commandes et répertoire clients (0.1.4)
-
-Les commandes sont indépendantes de la disponibilité du catalogue. Une ligne sans produit local conserve son nom, sa quantité, ses montants et sa référence d’origine ; son lien est réparé ultérieurement sans modifier les montants ni le stock. Le tableau « Order reconciliation » affiche les totaux natifs, statuts et lignes encore sans lien.
-
-Le « Customer contact directory » est un répertoire privé de copies de coordonnées, disponible dans la configuration du connecteur aux administrateurs autorisés. Les profils clients et contacts invités des commandes sont transmis dans les deux sens avec les webhooks signés et la déduplication. La copie s’actualise quand la fiche d’origine change, via le contrôle périodique. Les administrateurs modifient les coordonnées sur leur boutique d’origine. Les identités sont conservées par source et identifiant ; les emails ne fusionnent jamais automatiquement deux fiches. Les noms, email, téléphone, société et adresses de facturation/livraison sont transmis.
-
-Ce répertoire ne crée ni ne fusionne de comptes de connexion WordPress ou PrestaShop : les comptes existants, mots de passe, rôles, tokens de paiement et consentements marketing ne sont pas transférés. Les adresses historiques des commandes restent leurs instantanés. La synchronisation des suppressions et de tout le carnet d’adresses demande un traitement explicite ; seuls les profils présents et les contacts des commandes sont parcourus. Les répertoires et leurs données restent dans les bases privées des boutiques et ne doivent jamais être publiés dans le dépôt.
-
-La mise à jour ajoute automatiquement une table privée de contacts et conserve les configurations, correspondances et historiques existants. Installer les deux versions avant de reprendre les échanges.
-
-### Source order statuses (0.1.5)
-Unknown PrestaShop order states travel with their native ID and label. WooCommerce automatically registers a private administrative status (for example `PrestaShop: Reçue`). The WordPress bridge panel offers a mapping to existing WooCommerce statuses and applies it to unchanged mirrors. This mapping changes mirror presentation only, retaining the canonical source status and financial snapshot. It does not mark a source sale paid, issue a new invoice, or create another stock movement.
-
-The signed connection health response includes the last worker state and UTC timestamp. A successful peer worker run clears the previous connection warning; per-record failures remain in the journal.
-
-### Extended catalog and recovery (0.1.7)
-- Non-variation WooCommerce attributes map to native PrestaShop features, including multiple values. Dimensions convert between native store units through centimetres. Product and combination EAN/UPC/ISBN/MPN travel explicitly; WooCommerce uses its native global identifier where available and retains supplementary codes in private product metadata. A 14-digit GTIN has no native PrestaShop EAN13 slot and is preserved in bridge metadata instead.
-- Variation images are imported and attached to their native combination/variation. Downloads retain the existing peer-host, HTTPS, MIME, size and pixel limits. PrestaShop galleries remain additive. WooCommerce retains additional variation image attachments in private metadata because its native variation has one primary image.
-- Stock-management modes participate in catalog fingerprints. Initial unmapped products can recover from obsolete invalid queued snapshots: the newest valid full snapshot supersedes older catalog events, and earlier stock events already included in its count are marked ignored. Existing mapped product quantities are never rebased. A repeated stock-mode transition matching the initial count is idempotent.
-- The customer directory now transports the native PrestaShop address book and the two standard WooCommerce addresses (maximum 100 entries per profile). Only allowlisted contact fields are transferred. A bounded rescan of previously captured source contacts detects removed profiles and clears their mirrored coordinates with a deletion marker. Historical order addresses and native login accounts are untouched.
-- New fields are visible in the private catalog audit; contact summaries include delivery address and address-book count. Existing ACF/private KerAwen data, custom SEO templates, supplier relations, purchasing cost semantics, login-account migration, native financial refunds and the real KerAwen acceptance test remain outside the verified mappings. Do not treat arbitrary private plugin metadata or passwords as portable fields.
-
-### Archived order products, SEO and purchasing (0.1.8)
-Referenced WooCommerce products in the trash are included as archived catalog records. PrestaShop imports them inactive and unavailable for ordering, allowing historical order lines to be linked. The original WordPress trash item is never restored by the bridge. This does not propagate permanent product deletion.
-
-PrestaShop meta title/description map to Yoast product metadata. When Yoast is available, its source templates are resolved before transfer; the original source template is preserved. Unresolved template expressions are not published on the other platform. This covers product titles/descriptions, not the entire SEO plugin configuration.
-
-The primary supplier name/reference and the explicit net unit purchasing cost map to native PrestaShop supplier/product fields. WooCommerce exposes dedicated product fields (Prix d’achat HT, Fournisseur principal, Référence fournisseur), separate from the retail price and tax-inclusive price entry. Additional suppliers, purchase orders, commercial-module metadata and unrelated accounting/COGS integrations are not modified.
-
-### Stock availability policy (0.1.9)
-Catalog updates now refresh the PrestaShop ordering-out-of-stock policy for existing products, without resetting tracked quantities. The WooCommerce bridge panel exposes an explicit batched action to set unknown source-owned variation quantities to zero and disable backorders. Known quantities and PrestaShop-owned products are preserved; parent-managed inventory requires a separate allocation decision. Only use the action after choosing this inventory policy.
-
-
-## Historical 0.1.10 scope (superseded by 0.2.0 below)
-
-Configure the explicit allowlist in the WooCommerce bridge panel. Empty by default:
-
-```json
-[
-  {"id":"material_note","source":"meta","key":"material_note"},
-  {"id":"care_note","source":"acf","key":"field_your_local_key"}
-]
+```sh
+php scripts/docs-preview.php > /tmp/wd29-documentation.html
 ```
 
-These mappings apply to products and variations, not order/customer metadata. Use stable unique transport IDs. ACF field definitions must already exist locally; use a field key for fields not yet saved. The bridge never inventories all metadata or ACF groups. WooCommerce single-value metadata supports JSON scalars and nested arrays (64 KiB per value, depth 8, 50 mappings). Native price/stock fields, bridge internals and credential-like keys are rejected. Only explicitly selected business metadata should be added.
+Ce script CLI rend le composant de présentation avec une configuration fictive, sans charger WordPress, PrestaShop, une base de données ou un secret. Voir [la provenance des captures](docs/screenshots/README.md). Les captures ne représentent pas un état opérationnel réel.
 
-Supported ACF types: text, textarea, number, range, email, URL, true/false, select, checkbox, radio, button group, date, date/time, time and color. Values and local ACF references are written through WooCommerce metadata storage; native ACF reads are covered by integration tests. ACF must be active for an ACF mapping. Field definitions, defaults and validation hooks are not synchronized. Media, relationships, taxonomies, repeaters, groups, flexible content and other extension-specific types require dedicated adapters; their local IDs cannot be treated as cross-store identities.
+## Évolutions récentes
 
-PrestaShop retains selected values privately in the bridge mapping snapshot and re-exports them unchanged on catalog edits. This does not create native PrestaShop features or KerAwen fields, or a custom field editor there. Existing conflict handling applies. Explicit missing-value markers propagate deletion; omitted IDs leave WooCommerce fields untouched. Removing an allowlist mapping does not delete local source metadata. WordPress scalar storage conventions apply; arrays preserve their JSON structure. Duplicate rows for one metadata key are not supported.
-
-Validation: native WooCommerce/PrestaShop suites plus `WD29_WP_ROOT=/path/to/disposable/wordpress php tests/custom-fields-integration.php` in the WooCommerce repository with official ACF installed (database must be wd29woo, domain woo.example.test). See [ACF field API](https://www.advancedcustomfields.com/resources/get_field_object/).
-
-
-## Version 0.2.0 — broader synchronization and operational checks
-
-- Visual Woo field allowlist with product, variation, order and registered-customer scopes; HPOS order metadata.
-- ACF native groups, image URLs, synchronized-product relationships; PRO repeaters/galleries are supported when available, with native PRO storage not yet exercised in our free-ACF fixture. See CUSTOM-FIELDS.md for exact type and identity boundaries.
-- PrestaShop bridge editor for already synchronized product/variant/order custom values, with stale-edit detection. This is not a KerAwen field mapping.
-- Additive multiple supplier purchasing records, per parent/variant, with currency validation and independent primary selection; see SUPPLIERS.md.
-- Source-owned refund/credit-slip audit records; no second money movement, fiscal document, or stock restoration. Native mirrored order-line IDs stay stable, including upgrades from old payloads.
-- Optional native customer accounts with independent passwords, no automatic email merge, source-owned profile updates and standard billing/shipping addresses. Disabled by default. Additional addresses remain in the complete private contact directory. No marketing consent transfer; Woo account notifications suppressed. Native account deletion/deactivation is not automatically propagated.
-- CLI-only server worker, structured diagnostics and keyed errors; see OPERATIONS.md. An actual server schedule still requires installation on the hosting account.
-- PrestaShop stock workers now record automated movements under an unsaved system actor (employee ID0), avoiding failure when no staff member is logged in.
-
-Validated with native Woo/PS integration suites, real HPOS storage, free ACF, supplier/account/refund fixtures, MySQL rollback/replay/retry/worker-lock tests, and cross-store concurrent stock movements. The cross-store test uses signed file bundles and native PS adjustments; it is not a real KerAwen cash-register transaction or an HTTPS end-to-end checkout.
-
-Remaining: supported KerAwen API contract for loyalty/redemption/procurement/private fields; real POS acceptance tests; hosting scheduler activation; ACF PRO native tests and unsupported field types; shared reservation for simultaneous last-unit sales; advanced catalog types (packs, protected downloads, multistore), full fiscal/payment refund workflows (recoverable removal behavior is described in 0.2.1 below). Ordinary asynchronous stock synchronization alone cannot prevent simultaneous last-unit overselling.
-
-
-## Version 0.2.1 — recoverable removals and upgrade conflicts
-
-- Permanent deletion of a mapped source product archives its mirror without changing stock or deleting media. Persistent deletion markers prevent stale events from recreating the source. Missing capture snapshots are diagnosed explicitly.
-- Optional gallery removals detach only imported associations; files and manual images are retained. The default remains additive. See GALLERY.md for recovery and single-shop limits.
-- Order conflicts caused solely by empty newly introduced fields or added source line IDs can be retried through the settings panel. Native mirror totals, lines, addresses and financial state are checked first; actual business differences remain paused.
-- Woo ACF flexible-content layout translation and existing catalog taxonomy identities are supported through explicit local schemas. Native ACF PRO storage still requires its own acceptance run.
-
-See ACCEPTANCE.md for the exact remaining hosting, KerAwen and real transaction checks. Older scope sections above describe historical versions; the current custom-field contract is CUSTOM-FIELDS.md in the WooCommerce repository.
+- **0.2.2** : présentation commune des panneaux, indicateurs, rapports repliables, tableaux défilants et badges d’état.
+- **0.2.1** : archivage des sources supprimées, galeries réversibles, contrôle des conflits techniques de commandes, ACF flexible et taxonomies de catalogue.
+- **0.2.0** : champs personnalisés étendus, fournisseurs, registre des remboursements, comptes natifs facultatifs, lignes de commandes stables et diagnostics CLI.
