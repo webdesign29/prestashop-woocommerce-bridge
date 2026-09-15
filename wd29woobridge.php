@@ -3,6 +3,7 @@
 if (!defined('_PS_VERSION_')) { exit; }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Engine.php';
+require_once __DIR__ . '/includes/AdminDesign.php';
 require_once __DIR__ . '/includes/OrderConflicts.php';
 require_once __DIR__ . '/includes/CustomerAccounts.php';
 require_once __DIR__ . '/includes/Refunds.php';
@@ -20,7 +21,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.2.1';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.2.2';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '8.99.99'];
         parent::__construct();
@@ -181,6 +182,6 @@ class Wd29woobridge extends Module
                 if ($fields) { $html.='<button class="btn btn-primary" name="bridge_action" value="save_mirror_fields">Save custom fields</button>'; } else { $html.='<p>No synchronized custom fields for this record.</p>'; }
             } catch (Throwable $error) { $html.='<p>'.$this->escape($error->getMessage()).'</p>'; }
         }
-        return $html.'</form></div>';
+        return \WD29\Bridge\AdminDesign::render($html.'</form></div>', $engine, 'ps');
     }
 }
