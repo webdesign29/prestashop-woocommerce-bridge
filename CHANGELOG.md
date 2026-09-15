@@ -1,3 +1,7 @@
+# 0.1.2
+
+- PrestaShop: derive variable base prices from children, preserve tracked backorder policy and block incompatible mixed inventory modes before creating products.
+
 # 0.1.1
 
 - Add a read-only catalog audit with source identities, destination mappings, tax basis and unknown inventory.

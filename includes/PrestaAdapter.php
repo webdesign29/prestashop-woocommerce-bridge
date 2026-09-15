@@ -152,7 +152,7 @@ final class PrestaAdapter
         foreach ($inventories as $inventory) {
             if ($inventory['key'] !== $key) { continue; }
             $qty = Protocol::quantity($inventory['quantity']);
-            if ($qty !== null) { \StockAvailable::setQuantity($pid, $aid, $qty, $this->shop(), false); }
+            if ($qty !== null) { \StockAvailable::setQuantity($pid, $aid, $qty, $this->shop(), false); if ($aid === 0) { \StockAvailable::setProductOutOfStock($pid, !empty($inventory['backorders']) ? 1 : 0, $this->shop()); } }
             elseif ($aid === 0) { \StockAvailable::setProductOutOfStock($pid, $inventory['status'] === 'instock' ? 1 : 0, $this->shop()); }
             $this->engine->sql('UPDATE {b}map SET quantity=?,stock_initialized=1 WHERE record_key=?', [$qty, $key]);
             return;
@@ -161,12 +161,30 @@ final class PrestaAdapter
     public function applyProduct(array $data, ?array $map): int
     {
         if ($data['currency'] !== (new \Currency((int) \Configuration::get('PS_CURRENCY_DEFAULT')))->iso_code) { throw new \RuntimeException('Currency mismatch.'); }
+        // WooCommerce variable parents have no native regular price; combinations carry it.
+        if ($data['type'] === 'variable' && $data['prices']['regular'] === null) {
+            $base = null;
+            foreach ($data['variants'] as $row) {
+                $candidate = $this->prices($row['prices']);
+                if ($base === null || (float)$candidate['regular'] < $base) {
+                    $base = (float)$candidate['regular']; $data['prices'] = $row['prices']; $data['prices']['sale'] = null;
+                }
+            }
+        }
         $prices = $this->prices($data['prices']);
         if (!in_array($data['type'], ['simple', 'variable'], true)) { throw new \RuntimeException('Unsupported product type.'); }
         // A shared WooCommerce parent stock cannot be split among combinations without an inventory decision.
         if ($data['type'] === 'variable') {
+            $stockModes = [];
             foreach ($data['inventory'] as $item) {
-                if ($item['key'] === $data['key'] && $item['quantity'] !== null) { throw new \RuntimeException('Parent-managed variant stock needs allocation to combinations.'); }
+                if ($item['key'] === $data['key']) {
+                    if ($item['quantity'] !== null) { throw new \RuntimeException('Parent-managed variant stock needs allocation to combinations.'); }
+                    continue;
+                }
+                $stockModes[] = $item['quantity'] === null ? 'unknown:' . $item['status'] : 'tracked:' . (int)!empty($item['backorders']);
+            }
+            if (count(array_unique($stockModes)) > 1) {
+                throw new \RuntimeException('Mixed combination stock modes cannot share one PrestaShop backorder policy; reconcile quantities first.');
             }
         }
         $p = $map ? new \Product((int) $map['local_id']) : new \Product();
@@ -201,6 +219,14 @@ final class PrestaAdapter
             $v->setAttributes($attributes);
             $this->engine->bind($row['key'], 'variant', (int) $v->id);
             if (!$vm) { $this->initializeStock((int) $p->id, (int) $v->id, $row['key'], $data['inventory']); }
+        }
+        if (!$map && $data['type'] === 'variable') {
+            foreach ($data['inventory'] as $item) {
+                if ($item['key'] === $data['key']) { continue; }
+                $allow = $item['quantity'] === null ? $item['status'] === 'instock' : !empty($item['backorders']);
+                \StockAvailable::setProductOutOfStock((int)$p->id, $allow ? 1 : 0, $this->shop());
+                break;
+            }
         }
         \Product::updateDefaultAttribute((int) $p->id);
         $meta = $map && $map['snapshot'] ? json_decode($map['snapshot'], true) : [];

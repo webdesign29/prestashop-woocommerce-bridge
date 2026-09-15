@@ -48,6 +48,7 @@ expect($delta && json_decode($delta[0]['payload'],true)['delta']===-1,'Native Pr
 $v=$data; $v['key']='woo:product:801'; $v['type']='variable';
 $v['attributes']=[['name'=>'Size','options'=>['M'],'variation'=>true]];
 $v['variants']=[['key'=>'woo:variant:802','sku'=>'','attributes'=>['Size'=>'M'],'prices'=>$data['prices'],'weight_kg'=>'0','status'=>'publish']];
+$v['prices']['regular']=null; // Native WooCommerce variable parent: price lives on its children.
 $v['inventory']=[['key'=>$v['key'],'quantity'=>null,'status'=>'instock','backorders'=>false],['key'=>'woo:variant:802','quantity'=>3,'status'=>'instock','backorders'=>false]];
 $send(str_repeat('c',32),'product',$v['key'],['base'=>'','hash'=>Engine::catalogHash($v),'data'=>$v]);
 $vm=$e->mapping('woo:variant:802'); expect($vm!==null,'Combination import failed: '.json_encode($e->report()));
@@ -79,3 +80,9 @@ $audited = $e->catalogAudit();
 expect(count($audited)>0, "Catalog audit omitted captured products");
 expect(strpos(json_encode($audited), "customer@example.test") === false, "Catalog audit leaked order data");
 echo "PASS: catalog audit includes products without customer order data\n";
+
+$mixed=$v; $mixed['inventory'][]=['key'=>'woo:variant:999','quantity'=>null,'status'=>'instock','backorders'=>false];
+try { $e->adapter->applyProduct($mixed,null); throw new RuntimeException('Mixed stock modes were accepted'); }
+catch (RuntimeException $error) { expect(strpos($error->getMessage(),'Mixed combination stock modes')!==false,'Unexpected mixed-stock failure'); }
+expect(!Product::isAvailableWhenOutOfStock(StockAvailable::outOfStock((int)$combo->id_product,1)), 'Tracked combinations inherited unlimited availability');
+echo "PASS: variable parent price fallback and mixed-stock overselling guard\n";

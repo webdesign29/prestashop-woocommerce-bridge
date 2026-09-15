@@ -55,3 +55,7 @@ GPL-2.0-or-later. Voir `LICENSE`.
 ```sh
 WD29_PS_ROOT=/chemin/prestashop php tests/prestashop-integration.php
 ```
+
+### Stock des déclinaisons
+
+PrestaShop partage une politique de commande hors stock pour toutes les déclinaisons. Les produits WooCommerce mélangeant des quantités suivies et des disponibilités sans quantité sont bloqués avant création pour éviter de rendre commandable une déclinaison à zéro. Harmoniser leur suivi de quantité avant import. Le prix de base des parents variables sans prix propre est calculé à partir des prix de leurs déclinaisons.
