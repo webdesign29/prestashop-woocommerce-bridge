@@ -94,3 +94,6 @@ Referenced WooCommerce products in the trash are included as archived catalog re
 PrestaShop meta title/description map to Yoast product metadata. When Yoast is available, its source templates are resolved before transfer; the original source template is preserved. Unresolved template expressions are not published on the other platform. This covers product titles/descriptions, not the entire SEO plugin configuration.
 
 The primary supplier name/reference and the explicit net unit purchasing cost map to native PrestaShop supplier/product fields. WooCommerce exposes dedicated product fields (Prix d’achat HT, Fournisseur principal, Référence fournisseur), separate from the retail price and tax-inclusive price entry. Additional suppliers, purchase orders, commercial-module metadata and unrelated accounting/COGS integrations are not modified.
+
+### Stock availability policy (0.1.9)
+Catalog updates now refresh the PrestaShop ordering-out-of-stock policy for existing products, without resetting tracked quantities. The WooCommerce bridge panel exposes an explicit batched action to set unknown source-owned variation quantities to zero and disable backorders. Known quantities and PrestaShop-owned products are preserved; parent-managed inventory requires a separate allocation decision. Only use the action after choosing this inventory policy.

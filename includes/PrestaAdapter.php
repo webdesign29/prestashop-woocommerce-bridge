@@ -336,7 +336,7 @@ final class PrestaAdapter
             $this->engine->bind($row['key'], 'variant', (int) $v->id);
             if (!$vm) { $this->initializeStock((int) $p->id, (int) $v->id, $row['key'], $data['inventory']); }
         }
-        if (!$map && $data['type'] === 'variable') {
+        if ($data['type'] === 'variable') {
             foreach ($data['inventory'] as $item) {
                 if ($item['key'] === $data['key']) { continue; }
                 $allow = $item['quantity'] === null ? $item['status'] === 'instock' : !empty($item['backorders']);
@@ -344,6 +344,7 @@ final class PrestaAdapter
                 break;
             }
         }
+        if ($data['type']==='simple') { foreach ($data['inventory'] as $item) { if ($item['key']!==$data['key']) { continue; } $allow=$item['quantity']===null?$item['status']==='instock':!empty($item['backorders']); \StockAvailable::setProductOutOfStock((int)$p->id,$allow?1:0,$this->shop()); } }
         \Product::updateDefaultAttribute((int) $p->id);
         $meta = $map && $map['snapshot'] ? json_decode($map['snapshot'], true) : [];
         $priceRows = array_merge([['key' => $data['key'], 'prices' => $data['prices']]], $data['variants']);

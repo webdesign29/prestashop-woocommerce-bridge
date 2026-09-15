@@ -178,3 +178,15 @@ $cr=$e->adapter->product((int)$cp->id); expect($cr['archived']===true && $cr['se
 expect((float)$cr['purchase_price_net']===9.25 && $cr['supplier']['reference']==='SUP-42','Supplier or purchasing price lost');
 echo "PASS: archived non-sellable product, native SEO, supplier reference and net purchasing price\n";
 $config['mode']='disabled'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+
+$config['mode']='live'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+$transition=$v; $transition['key']='woo:product:8990'; $transition['variants'][0]['key']='woo:variant:8991'; $transition['variants'][0]['images']=[];
+$transition['inventory']=[['key'=>$transition['key'],'quantity'=>null,'status'=>'instock','backorders'=>false],['key'=>'woo:variant:8991','quantity'=>null,'status'=>'instock','backorders'=>false]];
+$send(str_repeat('d1',16),'product',$transition['key'],['base'=>'','hash'=>Engine::catalogHash($transition),'data'=>$transition]);
+$tm=$e->mapping($transition['key']); expect(Product::isAvailableWhenOutOfStock(StockAvailable::outOfStock((int)$tm['local_id'],1)),'Initial unknown availability fixture failed');
+$transition['inventory'][1]['quantity']=0; $transition['inventory'][1]['status']='outofstock';
+$send(str_repeat('d2',16),'product',$transition['key'],['base'=>$tm['fingerprint'],'hash'=>Engine::catalogHash($transition),'data'=>$transition]);
+$send(str_repeat('d3',16),'stock','woo:variant:8991',['set_mode'=>true,'previous'=>null,'quantity'=>0]);
+expect(!Product::isAvailableWhenOutOfStock(StockAvailable::outOfStock((int)$tm['local_id'],1)),'Existing product retained unlimited ordering after stock mode change');
+echo "PASS: existing variable switches from unlimited availability to managed zero without overselling\n";
+$config['mode']='disabled'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
