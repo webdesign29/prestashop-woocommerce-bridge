@@ -13,7 +13,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.1.6';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.1.7';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '8.99.99'];
         parent::__construct();
@@ -145,7 +145,7 @@ class Wd29woobridge extends Module
         $html .= '</tr></thead><tbody>';
         foreach ($engine->report() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
         $html .= '</tbody></table><h3>Catalog audit</h3><p>Latest transmitted snapshots; unknown stock is not zero. Up to 200 products.</p><table class="table"><thead><tr>';
-        foreach (['source','local_id','name','brands','tags','type','regular','sale','tax','basis','initial_stock_snapshot'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
+        foreach (['source','local_id','name','brands','tags','type','regular','sale','tax','basis','initial_stock_snapshot','identifiers','dimensions_cm','features','variant_images'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->catalogAudit() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
         $html .= '</tbody></table><h3>Order reconciliation</h3><p>Unlinked historical lines retain source details and receive catalog links once products are available.</p><table class="table"><thead><tr>';
@@ -153,7 +153,7 @@ class Wd29woobridge extends Module
         $html .= '</tr></thead><tbody>';
         foreach ($engine->orderReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
         $html .= '</tbody></table><h3>Customer contact directory</h3><p>Read-only contact copies edited on their source store. No login accounts, passwords or marketing consents copied. No automatic identity merge by email. Up to 200 contacts.</p><table class="table"><thead><tr>';
-        foreach (['source','name','email','phone','company','billing','type'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
+        foreach (['source','name','email','phone','company','billing','addresses','shipping','type'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->customerReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
         return $html . '</tbody></table></div>';

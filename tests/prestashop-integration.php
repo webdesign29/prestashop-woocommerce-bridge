@@ -124,3 +124,46 @@ $customOrder->current_state=(int)$customState->id; expect($customOrder->save(),'
 $wire=$e->adapter->order((int)$customOrder->id);
 expect($wire['status']==='ps-state-'.$customState->id && $wire['source_status']['label']==='Reçue fixture','Unknown source status was lost or guessed');
 echo "PASS: custom PrestaShop status preserves native ID and label\n";
+
+$config['mode']='live'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+$extended=$data; $extended['key']='woo:product:8801'; $extended['inventory'][0]['key']=$extended['key'];
+$extended['identifiers']=['ean13'=>'4006381333931','upc'=>'','isbn'=>'','mpn'=>'MFG-42'];
+$extended['dimensions_cm']=['length'=>'12.5','width'=>'3','height'=>'2'];
+$extended['attributes']=[['name'=>'Material','options'=>['Cotton','Linen'],'variation'=>false]];
+$send(str_repeat('9',32),'product',$extended['key'],['base'=>'','hash'=>Engine::catalogHash($extended),'data'=>$extended]);
+$em=$e->mapping($extended['key']); expect($em!==null,'Extended product failed: '.json_encode($e->report()));
+$round=$e->adapter->product((int)$em['local_id']);
+expect($round['identifiers']['ean13']==='4006381333931' && $round['identifiers']['mpn']==='MFG-42','Native identifiers lost');
+expect((float)$round['dimensions_cm']['length']===12.5,'Dimension conversion failed');
+expect($round['attributes'][0]['name']==='Material' && $round['attributes'][0]['options']===['Cotton','Linen'],'Descriptive feature mapping failed');
+$old=$extended; $old['key']='woo:product:8802'; $old['inventory'][0]['key']=$old['key']; $old['prices']['regular']=null;
+$e->receive(['source'=>'woo','op'=>'events','events'=>[['id'=>str_repeat('a1',16),'kind'=>'product','key'=>$old['key'],'payload'=>['base'=>'','hash'=>Engine::catalogHash($old),'data'=>$old]]]]);
+$fresh=$old; $fresh['prices']['regular']='25'; $fresh['inventory'][0]['quantity']=0;
+$e->receive(['source'=>'woo','op'=>'events','events'=>[['id'=>str_repeat('a2',16),'kind'=>'product','key'=>$fresh['key'],'payload'=>['base'=>'','hash'=>Engine::catalogHash($fresh),'data'=>$fresh]]]]);
+$e->retry(); $drain();
+expect($e->mapping($fresh['key'])!==null,'Corrected initial snapshot did not unblock import');
+expect($e->sql('SELECT state FROM {b}queue WHERE event_id=?',[str_repeat('a1',16)])[0]['state']==='ignored','Obsolete initial message still blocks queue');
+$send(str_repeat('a3',16),'stock',$fresh['key'],['set_mode'=>true,'previous'=>null,'quantity'=>0]);
+expect($e->sql('SELECT state FROM {b}queue WHERE event_id=?',[str_repeat('a3',16)])[0]['state']==='applied','Initial stock mode replay was not idempotent');
+echo "PASS: native identifiers, dimensions, descriptive features and corrected initial snapshot recovery\n";
+$config['mode']='disabled'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+
+$contactWithBook=$contact; $contactWithBook['addresses']=[['id'=>'office','label'=>'Office','address_1'=>'2 Fixture Street','city'=>'Fixture','country'=>'FR','secret'=>'must-not-transfer']];
+$contactMethod=new ReflectionMethod(Engine::class,'contactData'); $contactMethod->setAccessible(true);
+$cleanBook=$contactMethod->invoke($e,$contactWithBook);
+expect(count($cleanBook['addresses'])===1 && !isset($cleanBook['addresses'][0]['secret']),'Address book sanitation failed');
+$missing=$e->adapter->contactProfile('customer',99999999);
+expect($missing['deleted']===true && $missing['email']==='','Missing source profile did not produce deletion marker');
+echo "PASS: complete contact address payload sanitation and missing source profile marker\n";
+
+$config['mode']='live'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));
+$imageProductMap=$e->mapping($v['key']); $fixtureImage=new Image(); $fixtureImage->id_product=(int)$imageProductMap['local_id']; $fixtureImage->position=1; $fixtureImage->cover=true; expect($fixtureImage->add(),'Image fixture creation failed');
+$url='https://woo.example.test/wp-content/uploads/variant-fixture.jpg'; $imageMeta=json_decode($imageProductMap['snapshot'],true)?:[]; $imageMeta['images'][hash('sha256',$url)]=(int)$fixtureImage->id;
+$e->sql('UPDATE {b}map SET snapshot=? WHERE record_key=?',[Protocol::encode($imageMeta),$v['key']]);
+$v['variants'][0]['images']=[$url];
+$send(str_repeat('b1',16),'product',$v['key'],['base'=>$imageProductMap['fingerprint'],'hash'=>Engine::catalogHash($v),'data'=>$v]);
+$linked=$e->sql('SELECT id_image FROM `'._DB_PREFIX_.'product_attribute_image` WHERE id_product_attribute=?',[(int)$e->mapping('woo:variant:802')['local_id']]);
+expect(count($linked)===1 && (int)$linked[0]['id_image']===(int)$fixtureImage->id,'Combination-specific image association failed');
+$roundImages=$e->adapter->product((int)$imageProductMap['local_id']); expect(count($roundImages['variants'][0]['images'])===1,'Combination image export failed');
+echo "PASS: native combination image association and export using cached media fixture\n";
+$config['mode']='disabled'; Configuration::updateValue('WD29_BRIDGE_CONFIG',json_encode($config));

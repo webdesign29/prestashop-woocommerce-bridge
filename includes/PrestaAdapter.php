@@ -50,6 +50,50 @@ final class PrestaAdapter
             'status' => $quantity > 0 || \Product::isAvailableWhenOutOfStock(\StockAvailable::outOfStock($pid, $this->shop())) ? 'instock' : 'outofstock',
             'backorders' => \Product::isAvailableWhenOutOfStock(\StockAvailable::outOfStock($pid, $this->shop()))];
     }
+    private function dimensionFactor(): float
+    {
+        $unit=strtolower((string)\Configuration::get('PS_DIMENSION_UNIT'));
+        $units=['cm'=>1,'mm'=>0.1,'m'=>100,'in'=>2.54,'inch'=>2.54];
+        if (!isset($units[$unit])) { throw new \RuntimeException('Unsupported PrestaShop dimension unit.'); }
+        return $units[$unit];
+    }
+    private function extraFields($p): array
+    {
+        return ['identifiers'=>['ean13'=>(string)$p->ean13,'upc'=>(string)$p->upc,'isbn'=>(string)$p->isbn,'mpn'=>(string)$p->mpn]];
+    }
+    private function applyExtraFields($p,array $row): void
+    {
+        foreach (['ean13','upc','isbn','mpn'] as $field) {
+            if (array_key_exists($field,$row['identifiers']??[])) { $p->$field=(string)$row['identifiers'][$field]; }
+        }
+        if ($p instanceof \Product && isset($row['dimensions_cm'])) {
+            foreach (['length'=>'depth','width'=>'width','height'=>'height'] as $from=>$to) {
+                if (!array_key_exists($from,$row['dimensions_cm'])) { continue; }
+                $value=$row['dimensions_cm'][$from];
+                if ($value!==null && (!is_numeric($value)||(float)$value<0)) { throw new \RuntimeException('Invalid product dimension.'); }
+                $p->$to=$value===null?0:(float)$value/$this->dimensionFactor();
+            }
+        }
+    }
+    private function applyFeatures(\Product $p,array $attributes): void
+    {
+        $features=[];
+        foreach ($attributes as $row) {
+            if (!empty($row['variation'])) { continue; }
+            $name=html_entity_decode($row['name'],ENT_QUOTES|ENT_HTML5,'UTF-8');
+            $rows=$this->sql('SELECT id_feature FROM `'._DB_PREFIX_.'feature_lang` WHERE id_lang=? AND name=?',[$this->lang(),$name]);
+            if ($rows) { $fid=(int)$rows[0]['id_feature']; }
+            else { $feature=new \Feature(); $feature->name=$this->languages($name); if (!$feature->add()) { throw new \RuntimeException('Feature creation failed.'); } $fid=(int)$feature->id; }
+            foreach ($row['options'] as $value) {
+                $value=html_entity_decode($value,ENT_QUOTES|ENT_HTML5,'UTF-8');
+                $rows=$this->sql('SELECT f.id_feature_value FROM `'._DB_PREFIX_.'feature_value` f JOIN `'._DB_PREFIX_.'feature_value_lang` l ON l.id_feature_value=f.id_feature_value WHERE f.id_feature=? AND f.custom=0 AND l.id_lang=? AND l.value=?',[$fid,$this->lang(),$value]);
+                if ($rows) { $vid=(int)$rows[0]['id_feature_value']; }
+                else { $fv=new \FeatureValue(); $fv->id_feature=$fid; $fv->custom=false; $fv->value=$this->languages($value); if (!$fv->add()) { throw new \RuntimeException('Feature value creation failed.'); } $vid=(int)$fv->id; }
+                $features[]=['id'=>$fid,'id_feature_value'=>$vid];
+            }
+        }
+        if (!$p->setWsProductFeatures($features)) { throw new \RuntimeException('Feature assignment failed.'); }
+    }
     public function product(int $id): array
     {
         $p = new \Product($id, false, $this->lang(), $this->shop());
@@ -66,6 +110,11 @@ final class PrestaAdapter
             'prices' => ['regular' => number_format((float) $p->price, 6, '.', ''), 'sale' => null, 'tax_rate' => $rate, 'basis' => 'net'],
             'weight_kg' => (string) $p->weight, 'categories' => [], 'images' => [], 'attributes' => [], 'variants' => [], 'inventory' => []];
         if (strtolower((string) \Configuration::get('PS_WEIGHT_UNIT')) !== 'kg') { throw new \RuntimeException('PrestaShop weight unit must be kg or explicitly mapped.'); }
+        $meta=json_decode($this->engine->mapping($key)['snapshot']??'{}',true)?:[];
+        $data += $this->extraFields($p);
+        if (isset($meta['identifiers']['gtin'])) { $data['identifiers']['gtin']=$meta['identifiers']['gtin']; }
+        $factor=$this->dimensionFactor();
+        $data['dimensions_cm']=['length'=>(string)($p->depth*$factor),'width'=>(string)($p->width*$factor),'height'=>(string)($p->height*$factor)];
         foreach ($p->getCategories() as $categoryId) {
             $c = new \Category((int) $categoryId, $this->lang()); $path = []; $seen = [];
             while ($c->id && !$c->is_root_category && !isset($seen[$c->id])) {
@@ -87,12 +136,18 @@ final class PrestaAdapter
                 $vkey = $this->engine->identity('variant', $aid);
                 $variants[$aid] = ['key' => $vkey, 'sku' => (string) $row['reference'], 'attributes' => [],
                     'prices' => ['regular' => number_format((float) $p->price + (float) $row['price'], 6, '.', ''), 'sale' => null, 'tax_rate' => $rate, 'basis' => 'net'],
-                    'weight_kg' => (string) ((float) $p->weight + (float) $row['weight']), 'status' => $p->active ? 'publish' : 'draft'];
+                    'weight_kg' => (string) ((float) $p->weight + (float) $row['weight']), 'status' => $p->active ? 'publish' : 'draft'] + $this->extraFields(new \Combination($aid));
+                if (isset($meta['variant_extras'][$vkey])) { $variants[$aid]+=$meta['variant_extras'][$vkey]; }
+                $variants[$aid]['images']=[];
+                foreach ($this->sql('SELECT id_image FROM `'._DB_PREFIX_.'product_attribute_image` WHERE id_product_attribute=? ORDER BY id_image',[$aid]) as $imageRow) { $variants[$aid]['images'][]=preg_replace('/^http:/','https:',\Context::getContext()->link->getImageLink($p->link_rewrite,$id.'-'.$imageRow['id_image'])); }
                 $data['inventory'][] = $this->stock($id, $aid, $vkey);
             }
             $variants[$aid]['attributes'][$row['group_name']] = $row['attribute_name'];
         }
         foreach ($groups as $name => $options) { $data['attributes'][] = ['name' => $name, 'options' => array_values($options), 'variation' => true]; }
+        $featureGroups=[];
+        foreach ($this->sql('SELECT fl.name,vl.value FROM `'._DB_PREFIX_.'feature_product` fp JOIN `'._DB_PREFIX_.'feature_lang` fl ON fl.id_feature=fp.id_feature JOIN `'._DB_PREFIX_.'feature_value_lang` vl ON vl.id_feature_value=fp.id_feature_value WHERE fp.id_product=? AND fl.id_lang=? AND vl.id_lang=? ORDER BY fl.name,vl.value',[$id,$this->lang(),$this->lang()]) as $feature) { $featureGroups[$feature['name']][]=$feature['value']; }
+        foreach ($featureGroups as $name=>$options) { $data['attributes'][]=['name'=>$name,'options'=>$options,'variation'=>false]; }
         $data['variants'] = array_values($variants);
         $anon = clone \Context::getContext(); $anon->customer = new \Customer(); $anon->cart = new \Cart();
         $anon->currency = new \Currency((int)\Configuration::get('PS_CURRENCY_DEFAULT'));
@@ -220,6 +275,7 @@ final class PrestaAdapter
         $p->description_short = $this->languages(\Tools::purifyHTML($data['short_description']));
         $p->reference = $data['sku']; $p->price = $prices['regular']; $p->id_tax_rules_group = $prices['group'];
         $p->active = $data['status'] === 'publish'; $p->is_virtual = (bool) $data['virtual']; $p->weight = (float) $data['weight_kg'];
+        $this->applyExtraFields($p,$data);
         $p->available_for_order = true; $p->show_price = true;
         $categories = [];
         foreach ($data['categories'] as $path) { $categories[] = $this->category($path); }
@@ -227,6 +283,7 @@ final class PrestaAdapter
         $p->id_category_default = $categories[0];
         if (!$p->save()) { throw new \RuntimeException('Product save failed.'); }
         $p->updateCategories($categories);
+        $this->applyFeatures($p,$data['attributes']);
         if (isset($data['tags'])) {
             // Synchronize the shop's default language; other language tags stay untouched.
             $this->sql('DELETE FROM `' . _DB_PREFIX_ . 'product_tag` WHERE id_product=? AND id_lang=?', [(int)$p->id,$this->lang()]);
@@ -244,6 +301,7 @@ final class PrestaAdapter
             $v->id_product = (int) $p->id; $v->reference = $row['sku']; $v->price = number_format((float)$vp['regular'] - (float)$prices['regular'],6,'.','');
             $v->weight = (float) $row['weight_kg'] - (float) $p->weight; $v->minimal_quantity = 1;
             if (!$vm) { $v->default_on = $index === 0 ? 1 : null; }
+            $this->applyExtraFields($v,$row);
             if (!$v->save()) { throw new \RuntimeException('Combination save failed.'); }
             $attributes = []; foreach ($row['attributes'] as $group => $name) { $attributes[] = $this->attribute($group, $name); }
             $v->setAttributes($attributes);
@@ -277,7 +335,13 @@ final class PrestaAdapter
             if (!$specific->save()) { throw new \RuntimeException('Sale price could not be stored.'); }
             $meta['specific_prices'][$row['key']] = (int) $specific->id;
         }
-        foreach ($data['images'] as $index => $url) {
+        if (isset($data['identifiers'])) { $meta['identifiers']=$data['identifiers']; }
+        $allImages=$data['images'];
+        foreach ($data['variants'] as $row) {
+            $meta['variant_extras'][$row['key']]=array_intersect_key($row,array_flip(['dimensions_cm']));
+            foreach ($row['images']??[] as $url) { if (!in_array($url,$allImages,true)) { $allImages[]=$url; } }
+        }
+        foreach ($allImages as $index => $url) {
             $urlHash = hash('sha256', $url);
             if (!empty($meta['images'][$urlHash]) && \Validate::isLoadedObject(new \Image((int) $meta['images'][$urlHash]))) { continue; }
             $bytes = Protocol::imageBytes($url, $this->config()['peer']);
@@ -295,6 +359,12 @@ final class PrestaAdapter
                 }
                 $meta['images'][$urlHash] = (int) $image->id;
             } finally { if ($tmp && is_file($tmp)) { unlink($tmp); } }
+        }
+        foreach ($data['variants'] as $row) {
+            if (!array_key_exists('images',$row)) { continue; }
+            $vm=$this->engine->mapping($row['key']); $ids=[];
+            foreach ($row['images'] as $url) { $ids[]=(int)$meta['images'][hash('sha256',$url)]; }
+            $combination=new \Combination((int)$vm['local_id']); $combination->setImages($ids);
         }
         $this->engine->sql('UPDATE {b}map SET snapshot=? WHERE record_key=?', [Protocol::encode($meta), $data['key']]);
         return (int) $p->id;
@@ -336,7 +406,8 @@ final class PrestaAdapter
         if (!\Validate::isLoadedObject($c) || $c->deleted) { $d['deleted']=true; return $d; }
         $d['first_name']=$c->firstname; $d['last_name']=$c->lastname; $d['email']=$c->email; $d['company']=(string)$c->company; $d['guest']=(bool)$c->is_guest;
         $orders=$this->sql('SELECT id_address_invoice,id_address_delivery FROM `'._DB_PREFIX_."orders` WHERE id_customer=? AND module<>'wd29woobridge' ORDER BY id_order DESC LIMIT 1",[$id]);
-        $addresses=$c->getAddresses($this->lang());
+        $addresses=$c->getAddresses($this->lang()); $d['addresses']=[];
+        foreach ($addresses as $address) { $d['addresses'][]=['id'=>(string)$address['id_address'],'label'=>(string)$address['alias']]+$this->address((int)$address['id_address'],$c->email); }
         $billing=$orders[0]['id_address_invoice']??($addresses[0]['id_address']??0);
         $shipping=$orders[0]['id_address_delivery']??$billing;
         if ($billing) { $d['billing']=$this->address((int)$billing,$c->email); $d['phone']=$d['billing']['phone']; }

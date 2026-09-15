@@ -76,7 +76,9 @@ final class Engine
 
     public static function catalogHash(array $data): string
     {
-        unset($data['inventory']);
+        $data['inventory']=$data['inventory']??[];
+        foreach ($data['inventory'] as &$inventory) { $inventory['managed']=$inventory['quantity']!==null; unset($inventory['quantity']); }
+        unset($inventory);
         return Protocol::fingerprint($data);
     }
 
@@ -205,7 +207,12 @@ final class Engine
                 $count=$this->seed($kind,$offset);
                 $this->adapter->saveScanOffset($kind,$count<10?0:$offset+10);
             }
+            $offset=$this->adapter->scanOffset('known_contacts');
+            $contacts=$this->sql("SELECT id FROM {b}contacts WHERE record_key LIKE ? ORDER BY id LIMIT ".(int)$offset.",10",[$this->adapter->site().':%']);
+            foreach ($contacts as $contact) { $this->capture('customer',(int)$contact['id']); }
+            $this->adapter->saveScanOffset('known_contacts',count($contacts)<10?0:$offset+10);
             if (($this->config()['mode'] ?? '') === 'live') {
+                $this->supersedeUnmappedCatalog();
                 $events = $this->ready('in');
                 foreach ($events as $event) { $this->apply($event); }
             }
@@ -252,7 +259,7 @@ final class Engine
                 if (!empty($payload['set_mode'])) {
                     $previous = Protocol::quantity($payload['previous'] ?? null);
                     $stored = $map['quantity'] === null ? null : (int) $map['quantity'];
-                    if ($stored !== $previous) { throw new \RuntimeException('Inventory mode conflict; review the current count.'); }
+                    if ($stored !== $previous && $stored !== Protocol::quantity($payload['quantity'] ?? null)) { throw new \RuntimeException('Inventory mode conflict; review the current count.'); }
                     $quantity = Protocol::quantity($payload['quantity'] ?? null);
                     $this->adapter->stockSet($map, $quantity);
                     $this->sql('UPDATE {b}map SET quantity=?,stock_initialized=1 WHERE record_key=?', [$quantity, $key]);
@@ -316,8 +323,24 @@ final class Engine
             [$attempts, time() + min(3600, 30 * (2 ** min(7, $attempts))), $attempts >= 8 ? 'failed' : 'pending', $message, $event['seq']]);
     }
 
+    private function supersedeUnmappedCatalog(): void
+    {
+        // Initial imports use the newest received full snapshot. Mapped stock is never rebased.
+        $rows=$this->sql("SELECT q.* FROM {b}queue q JOIN (SELECT record_key,MAX(seq) seq FROM {b}queue WHERE direction='in' AND kind='product' AND state IN ('pending','failed') GROUP BY record_key) newest ON newest.seq=q.seq LEFT JOIN {b}map m ON m.record_key=q.record_key WHERE m.record_key IS NULL LIMIT 200");
+        foreach ($rows as $row) {
+            $payload=json_decode($row['payload'],true); $data=$payload['data']??[];
+            if (($data['key']??'')!==$row['record_key'] || ($payload['hash']??'')!==self::catalogHash($data)) { continue; }
+            $this->sql("UPDATE {b}queue SET state='ignored',error='Superseded by corrected initial catalog snapshot.' WHERE direction='in' AND kind='product' AND record_key=? AND seq<? AND state IN ('pending','failed','conflict')",[$row['record_key'],(int)$row['seq']]);
+            foreach ($data['inventory']??[] as $item) {
+                if ($this->mapping($item['key'])) { continue; }
+                $this->sql("UPDATE {b}queue SET state='ignored',error='Included in initial stock snapshot.' WHERE direction='in' AND kind='stock' AND record_key=? AND seq<? AND state IN ('pending','failed')",[$item['key'],(int)$row['seq']]);
+            }
+        }
+    }
+
     public function retry(): void
     {
+        $this->supersedeUnmappedCatalog();
         // Conflicts require reviewing and editing the source; they are never automatically overwritten.
         $this->sql("UPDATE {b}queue SET state='pending',attempts=0,next_try=0 WHERE state IN ('failed','pending')");
     }
@@ -346,7 +369,11 @@ final class Engine
                 'name' => $data['name'] ?? '', 'brands' => implode(', ', $data['brands'] ?? []), 'tags' => implode(', ', $data['tags'] ?? []), 'type' => $data['type'] ?? '',
                 'regular' => $prices['regular'] ?? 'missing', 'sale' => $prices['sale'] ?? '',
                 'tax' => $prices['tax_rate'] === null ? 'unknown' : (string)$prices['tax_rate'] . '%',
-                'basis' => $prices['basis'] ?? '', 'initial_stock_snapshot' => implode('; ', $stock)];
+                'basis' => $prices['basis'] ?? '', 'initial_stock_snapshot' => implode('; ', $stock),
+                'identifiers'=>json_encode($data['identifiers']??[],JSON_UNESCAPED_UNICODE),
+                'dimensions_cm'=>json_encode($data['dimensions_cm']??[],JSON_UNESCAPED_UNICODE),
+                'features'=>json_encode(array_values(array_filter($data['attributes']??[],function($a){return empty($a['variation']);})),JSON_UNESCAPED_UNICODE),
+                'variant_images'=>array_sum(array_map(function($v){return count($v['images']??[]);},$data['variants']??[]))];
         }
         return $result;
     }
@@ -384,6 +411,16 @@ final class Engine
             $clean[$field]=array_intersect_key($data[$field],$allowed);
             foreach ($clean[$field] as $value) { if (!is_string($value) || strlen($value)>1000) { throw new \RuntimeException('Invalid contact address value.'); } }
         }
+        if (isset($data['addresses'])) {
+            if (!is_array($data['addresses']) || count($data['addresses'])>100) { throw new \RuntimeException('Invalid address book.'); }
+            $clean['addresses']=[];
+            foreach ($data['addresses'] as $address) {
+                if (!is_array($address)) { throw new \RuntimeException('Invalid address book entry.'); }
+                $entry=array_intersect_key($address,$allowed+['id'=>true,'label'=>true]);
+                foreach ($entry as $value) { if (!is_string($value)||strlen($value)>1000) { throw new \RuntimeException('Invalid address book value.'); } }
+                $clean['addresses'][]=$entry;
+            }
+        }
         $clean['guest']=(bool)($data['guest']??false); $clean['deleted']=(bool)($data['deleted']??false);
         return $clean;
     }
@@ -404,6 +441,8 @@ final class Engine
             $out[]=['source'=>$row['record_key'],'name'=>trim(($d['first_name']??'').' '.($d['last_name']??'')),
                 'email'=>$d['email']??'','phone'=>$d['phone']??'','company'=>$d['company']??'',
                 'billing'=>implode(', ',array_filter(array_map(function($k)use($billing){return $billing[$k]??'';},['address_1','address_2','postcode','city','country']))),
+                'addresses'=>count($d['addresses']??[]),
+                'shipping'=>implode(', ',array_filter(array_map(function($k)use($d){return $d['shipping'][$k]??'';},['address_1','address_2','postcode','city','country']))),
                 'type'=>!empty($d['deleted'])?'deleted':(!empty($d['guest'])?'guest contact':'customer contact')];
         }
         return $out;
