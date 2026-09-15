@@ -7,6 +7,11 @@ final class PrestaAdapter
     public function site(): string { return 'ps'; }
     public function prefix(): string { return _DB_PREFIX_; }
     public function config(): array { return json_decode((string) \Configuration::get('WD29_BRIDGE_CONFIG'), true) ?: ['mode' => 'disabled']; }
+    public function workerStatus(?string $state=null): array
+    {
+        if ($state!==null) { \Configuration::updateValue('WD29_BRIDGE_WORKER',json_encode(['state'=>$state,'at'=>gmdate('c')])); }
+        return json_decode((string)\Configuration::get('WD29_BRIDGE_WORKER'),true)?:[];
+    }
     public function notice(string $text): void { \Configuration::updateValue('WD29_BRIDGE_NOTICE', strip_tags($text)); }
     public function scanOffset(string $kind): int { $value=json_decode((string)\Configuration::get('WD29_BRIDGE_SCAN'),true)?:[]; return (int)($value[$kind]??0); }
     public function saveScanOffset(string $kind,int $offset): void { $value=json_decode((string)\Configuration::get('WD29_BRIDGE_SCAN'),true)?:[]; $value[$kind]=$offset; \Configuration::updateValue('WD29_BRIDGE_SCAN',json_encode($value)); }

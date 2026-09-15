@@ -78,3 +78,5 @@ La mise à jour ajoute automatiquement une table privée de contacts et conserve
 
 ### Source order statuses (0.1.5)
 Unknown PrestaShop order states travel with their native ID and label. WooCommerce automatically registers a private administrative status (for example `PrestaShop: Reçue`). The WordPress bridge panel offers a mapping to existing WooCommerce statuses and applies it to unchanged mirrors. This mapping changes mirror presentation only, retaining the canonical source status and financial snapshot. It does not mark a source sale paid, issue a new invoice, or create another stock movement.
+
+The signed connection health response includes the last worker state and UTC timestamp. A successful peer worker run clears the previous connection warning; per-record failures remain in the journal.

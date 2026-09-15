@@ -153,7 +153,7 @@ final class Engine
         if (($message['source'] ?? '') !== ($this->adapter->site() === 'woo' ? 'ps' : 'woo')) { throw new \RuntimeException('Peer platform mismatch.'); }
         $op = $message['op'] ?? '';
         if ($op === 'health') {
-            return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->config()['mode']];
+            return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->config()['mode'], 'worker'=>$this->adapter->workerStatus()];
         }
         if (!$this->enabled()) { throw new \RuntimeException('Bridge is disabled.'); }
         if ($op === 'events') {
@@ -197,6 +197,7 @@ final class Engine
         $lock = substr($this->table . 'worker', 0, 64);
         $row = $this->sql('SELECT GET_LOCK(?,0) AS acquired', [$lock])[0] ?? [];
         if ((int) ($row['acquired'] ?? 0) !== 1) { return; }
+        $workerOutcome='failed'; $this->adapter->workerStatus('running');
         try {
             // Reconcile bounded pages as well as hooks: recovers missed callbacks and scheduled prices.
             foreach (['product','order','customer'] as $kind) {
@@ -215,13 +216,15 @@ final class Engine
                     $this->peer(['op' => 'events', 'events' => [['id' => $event['event_id'], 'kind' => $event['kind'],
                         'key' => $event['record_key'], 'payload' => json_decode($event['payload'], true, 64, JSON_THROW_ON_ERROR)]]]);
                     $this->sql("UPDATE {b}queue SET state='delivered',error='' WHERE seq=?", [$event['seq']]);
-                } catch (\Throwable $error) { $this->fail($event, $error); break; }
+                } catch (\Throwable $error) { $this->fail($event, $error); $workerOutcome='delivery_error'; break; }
             }
+            if ($workerOutcome==='failed') { $workerOutcome='completed'; }
         } finally {
+            $this->adapter->workerStatus($workerOutcome);
             $this->sql('SELECT RELEASE_LOCK(?)', [$lock]);
         }
         if ($wakePeer) {
-            try { $this->peer(['op' => 'tick']); }
+            try { $this->peer(['op' => 'tick']); $this->adapter->notice(''); }
             catch (\Throwable $error) { $this->adapter->notice($error->getMessage()); }
         }
     }
