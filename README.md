@@ -2,9 +2,9 @@
 
 Synchronisation directe **WooCommerce ↔ PrestaShop** : catalogue, stocks, commandes et contacts clients, avec webhooks signés et file d’attente persistante.
 
-**Version : 0.2.2 · candidate à recette.** Ce dépôt contient le plugin PrestaShop ; installez également le [plugin partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
+**Version : 0.2.2.** Ce dépôt contient le plugin PrestaShop ; installez également le [plugin partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
 
-[Télécharger les archives](https://github.com/webdesign29/prestashop-woocommerce-bridge/releases/tag/v0.2.2-rc.1) · [Exploitation et planificateur](OPERATIONS.md) · [Recette et limites](ACCEPTANCE.md)
+[Télécharger les archives](https://github.com/webdesign29/prestashop-woocommerce-bridge/releases/tag/v0.2.2-rc.1) · [Exploitation et planificateur](OPERATIONS.md) · [Tests et cas particuliers](ACCEPTANCE.md)
 
 ## Aperçu de la configuration
 
@@ -46,7 +46,7 @@ Installez `wd29woobridge-0.2.2.zip` depuis le gestionnaire de modules. Ouvrez **
 3. Copiez le webhook affiché par chaque plugin dans le réglage de l’autre. Utilisez HTTPS, puis passez les deux boutiques en **audit** et lancez **Test connection**.
 4. Vérifiez la fiscalité et la priorité du catalogue. La saisie des prix WooCommerce peut rester en **TTC**, avec une TVA correctement configurée. Une fiscalité manquante demande une base HT/TTC et un taux explicites ; le connecteur ne les devine pas.
 5. Capturez les catalogues, puis les contacts et les historiques de commandes nécessaires. Les actions de capture travaillent par lots ; examinez les erreurs, les stocks inconnus et les lignes sans lien.
-6. Effectuez la [recette](ACCEPTANCE.md), puis activez le mode **live**. En audit, les événements entrants sont reçus mais ne sont pas appliqués aux fiches, stocks et commandes.
+6. Effectuez les [tests de mise en service](ACCEPTANCE.md), puis activez le mode **live**. En audit, les événements entrants sont reçus mais ne sont pas appliqués aux fiches, stocks et commandes.
 7. Installez et vérifiez le worker sur l’hébergement, idéalement chaque minute sur chaque boutique, suivant [OPERATIONS.md](OPERATIONS.md). La présence du fichier CLI n’installe pas un planificateur. WP-Cron seul dépend des visites.
 
 Les statuts PrestaShop inconnus sont créés dans WooCommerce avec leur identifiant et libellé d’origine. Le panneau WordPress permet de les associer à un statut WooCommerce existant, sans transformer cette correspondance en opération de paiement.
@@ -59,15 +59,15 @@ Les statuts PrestaShop inconnus sont créés dans WooCommerce avec leur identifi
 - La désactivation conserve les correspondances et l’historique de déduplication. Ne réutilisez pas ces tables pour une autre paire de boutiques.
 - N’activez les comptes natifs et les retraits de galeries qu’après avoir choisi ces comportements. Aucun rapprochement automatique avec un compte utilisant déjà le même e-mail.
 
-## Limites et validation
+## Cas particuliers et validation
 
 **Ce connecteur n’est pas une certification KerAwen.** Les tests natifs WooCommerce/PrestaShop et les scénarios locaux de concurrence, rejeu et annulation ne remplacent pas une vente et un retour réalisés dans la caisse KerAwen réelle.
 
-- Fidélité, cartes cadeaux, achats et champs privés KerAwen : contrat d’API pris en charge et recette dédiée nécessaires.
+- Fidélité, cartes cadeaux, achats et champs privés KerAwen : contrat d’API pris en charge ; tests dédiés dans la caisse réelle.
 - Les mouvements de stock asynchrones convergent, mais ne réservent pas atomiquement le dernier article vendu simultanément sur les deux boutiques.
 - Multiboutique, packs, téléchargements protégés, variantes génériques et stock mutualisé au parent demandent des adaptations spécifiques. Les quantités mixtes suivies/inconnues doivent être harmonisées.
 - Écotaxe, devises incompatibles, fiscalité non mappée et écarts de frais/remises non expliqués peuvent bloquer une fiche ou une commande.
-- Les définitions ACF ne sont pas copiées. Groupes, médias, relations vers produits synchronisés, taxonomies de catalogue existantes et traductions de structures complexes sont pris en charge selon le [contrat ACF](https://github.com/webdesign29/woocommerce-prestashop-bridge/blob/main/CUSTOM-FIELDS.md). Le stockage natif des champs **ACF PRO** reste à valider avec ACF PRO ; les tests de traduction utilisent des schémas synthétiques.
+- Les définitions ACF ne sont pas copiées. Groupes, médias, relations vers produits synchronisés, taxonomies de catalogue existantes et traductions de structures complexes sont pris en charge selon le [contrat ACF](https://github.com/webdesign29/woocommerce-prestashop-bridge/blob/main/CUSTOM-FIELDS.md). Avec **ACF PRO**, le stockage natif des champs se vérifie sur l’installation cible ; les tests de traduction utilisent des schémas synthétiques.
 - La suppression/désactivation des comptes natifs n’est pas propagée automatiquement. Les remboursements financiers restent exécutés sur leur plateforme d’origine.
 
 Voir [ACCEPTANCE.md](ACCEPTANCE.md) pour la liste des vérifications à effectuer dans l’environnement cible.

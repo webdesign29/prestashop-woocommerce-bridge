@@ -21,7 +21,7 @@
 
 # Changelog
 
-## 0.1.0 — candidate à recette
+## 0.1.0
 
 - Appairage direct et webhooks signés.
 - Réunion initiale des catalogues et identités d’origine persistantes.
