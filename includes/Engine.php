@@ -37,16 +37,27 @@ final class Engine
     }
 
     public function config(): array { return $this->adapter->config(); }
+
+    private $licence;
+    public function licence(): Licence { return $this->licence ?? ($this->licence = new Licence($this->adapter)); }
+
+    /** Configured mode, except that live falls back to audit when the licence does not allow it. */
+    public function mode(): string
+    {
+        $mode = $this->config()['mode'] ?? 'disabled';
+        return $mode === 'live' && !$this->licence()->allowsLive() ? 'audit' : $mode;
+    }
+
     public function enabled(): bool { return in_array($this->config()['mode'] ?? 'disabled', ['audit', 'live'], true); }
 
     public function validateSettings(string $mode, string $peer, string $secret): void
     {
         if ($mode !== 'disabled' && ($peer === '' || strlen($secret) < 32)) {
-            throw new \RuntimeException('A peer HTTPS URL and shared secret are required before enabling the bridge.');
+            throw new \RuntimeException('Renseignez l\'adresse HTTPS du webhook partenaire et le secret partagé avant d\'activer la synchronisation.');
         }
         $previous = $this->config()['peer'] ?? '';
         if ($peer !== $previous && $previous !== '' && $this->sql('SELECT record_key FROM {b}map LIMIT 1')) {
-            throw new \RuntimeException('This bridge already has record mappings. Re-pairing requires an explicit migration of its private tables.');
+            throw new \RuntimeException('Cette boutique a déjà des correspondances avec un autre partenaire : changer de partenaire demande une migration de ses tables privées.');
         }
     }
 
@@ -209,7 +220,7 @@ final class Engine
         if (($message['source'] ?? '') !== ($this->adapter->site() === 'woo' ? 'ps' : 'woo')) { throw new \RuntimeException('Peer platform mismatch.'); }
         $op = $message['op'] ?? '';
         if ($op === 'health') {
-            return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->config()['mode'], 'worker'=>$this->adapter->workerStatus(), 'diagnostics'=>$this->diagnostics()];
+            return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->mode(), 'worker'=>$this->adapter->workerStatus(), 'diagnostics'=>$this->diagnostics()];
         }
         if (!$this->enabled()) { throw new \RuntimeException('Bridge is disabled.'); }
         if ($op === 'events') {
@@ -234,7 +245,7 @@ final class Engine
     {
         $ids = $this->adapter->ids($kind, $offset, 10);
         foreach ($ids as $id) {
-            if ($kind==='order' && ($this->config()['mode']??'')==='live') { $this->adapter->reconcileOrderLinks((int)$id); }
+            if ($kind==='order' && $this->mode()==='live') { $this->adapter->reconcileOrderLinks((int)$id); }
             $this->capture($kind, (int) $id);
             if ($kind==='order') { $key=$this->adapter->orderContact((int)$id); if ($key) { $this->capture('customer',$this->contactId($key)); } }
         }
@@ -255,6 +266,8 @@ final class Engine
         if ((int) ($row['acquired'] ?? 0) !== 1) { return; }
         $workerOutcome='failed'; $this->adapter->workerStatus('running');
         try {
+            // At most one bounded HTTPS call per day; a licence problem never stops the worker.
+            try { $this->licence()->maybeCheck(); } catch (\Throwable $error) { $this->adapter->notice('Licence check skipped: ' . $error->getMessage()); }
             $this->scanDeletedProducts();
             // Reconcile bounded pages as well as hooks: recovers missed callbacks and scheduled prices.
             foreach (['product','order','customer'] as $kind) {
@@ -266,7 +279,7 @@ final class Engine
             $contacts=$this->sql("SELECT id FROM {b}contacts WHERE record_key LIKE ? ORDER BY id LIMIT ".(int)$offset.",10",[$this->adapter->site().':%']);
             foreach ($contacts as $contact) { $this->capture('customer',(int)$contact['id']); }
             $this->adapter->saveScanOffset('known_contacts',count($contacts)<10?0:$offset+10);
-            if (($this->config()['mode'] ?? '') === 'live') {
+            if ($this->mode() === 'live') {
                 $this->supersedeDeletedCatalog();
                 $this->supersedeUnmappedCatalog();
                 $events = $this->ready('in');
@@ -638,11 +651,12 @@ final class Engine
     public function diagnostics(?int $now=null): array
     {
         $now=$now??time(); $worker=$this->adapter->workerStatus(); $at=strtotime($worker['at']??'');
-        $workerAge=$at===false?null:max(0,$now-$at); $mode=$this->config()['mode']??'disabled'; $issues=[];
+        $workerAge=$at===false?null:max(0,$now-$at); $configured=$this->config()['mode']??'disabled'; $mode=$this->mode(); $issues=[];
+        if ($configured!=='disabled') { foreach ($this->licenceIssues($configured,$now) as $issue) { $issues[]=$issue; } }
         if ($mode!=='disabled' && ($workerAge===null || $workerAge>300)) {
-            $issues[]=['code'=>'worker_stale','severity'=>'error','action'=>'Run the server worker every minute; check its exit status and PHP/database availability.'];
+            $issues[]=['code'=>'worker_stale','severity'=>'error','action'=>'Lancez le worker du serveur chaque minute ; vérifiez son code de sortie et la disponibilité de PHP et de la base.'];
         } elseif (($worker['state']??'')==='failed' || ($worker['state']??'')==='delivery_error') {
-            $issues[]=['code'=>'worker_failed','severity'=>'error','action'=>'Inspect failed/retrying events and server logs, then run the worker again.'];
+            $issues[]=['code'=>'worker_failed','severity'=>'error','action'=>'Examinez les événements en échec ou en reprise et les journaux du serveur, puis relancez le worker.'];
         }
         $queue=$this->sql("SELECT direction,state,COUNT(*) total,MIN(created_at) oldest_at,MIN(next_try) next_try,SUM(attempts>0) retried FROM {b}queue WHERE state IN ('pending','failed','conflict') GROUP BY direction,state");
         foreach ($queue as &$group) {
@@ -650,10 +664,10 @@ final class Engine
             $group['oldest_age_seconds']=max(0,$now-(strtotime($group['oldest_at'].' UTC')?:$now));
             $group['next_retry_in_seconds']=max(0,(int)$group['next_try']-$now);
             unset($group['oldest_at'],$group['next_try']);
-            if ($group['state']==='conflict') { $code='record_conflict'; $action='Review both versions; select catalog priority only for products, then retry the reviewed conflict.'; }
-            elseif ($group['state']==='failed') { $code='retry_exhausted'; $action='Correct the event error in the journal, then retry. Later events for the same record remain blocked.'; }
-            elseif ($group['retried']>0) { $code='event_retrying'; $action='Check the journal and peer health. Automatic exponential retries stop after eight attempts.'; }
-            elseif ($group['oldest_age_seconds']>300 && !($mode==='audit' && $group['direction']==='in')) { $code='queue_delayed'; $action='Check both workers and earlier failed/conflicting events for this record; allow further bounded batches to run.'; }
+            if ($group['state']==='conflict') { $code='record_conflict'; $action='Comparez les deux versions ; choisissez une priorité de catalogue (produits uniquement), puis relancez le conflit examiné.'; }
+            elseif ($group['state']==='failed') { $code='retry_exhausted'; $action='Corrigez l\'erreur indiquée dans le journal, puis relancez. Les événements suivants de la même fiche restent bloqués.'; }
+            elseif ($group['retried']>0) { $code='event_retrying'; $action='Consultez le journal et l\'état de la boutique partenaire. Les reprises automatiques s\'arrêtent après huit essais.'; }
+            elseif ($group['oldest_age_seconds']>300 && !($mode==='audit' && $group['direction']==='in')) { $code='queue_delayed'; $action='Vérifiez les deux workers et les événements plus anciens en échec ou en conflit pour cette fiche ; laissez passer les lots suivants.'; }
             else { continue; }
             $issues[]=['code'=>$code,'severity'=>$group['state']==='pending'?'warning':'error','direction'=>$group['direction'],'count'=>$group['total'],'action'=>$action];
         }
@@ -661,9 +675,25 @@ final class Engine
         $active=$this->sql('SELECT issue_key,code,first_seen,last_seen,occurrences FROM {b}issues ORDER BY first_seen LIMIT 100');
         foreach ($active as $issue) {
             $issues[]=['code'=>$issue['code'],'severity'=>'error','record'=>$issue['issue_key'],'age_seconds'=>max(0,$now-(int)$issue['first_seen']),'occurrences'=>(int)$issue['occurrences'],
-                'action'=>strpos($issue['code'],'deletion_')===0?'A source product is missing. Review its last captured catalog snapshot and database availability; keep the original mapping. The bridge will retry archiving and will not recreate the source.':($issue['code']==='capture_failed'?'Inspect this record and the capture notice; correct its unsupported or invalid fields. A successful recapture clears this issue.':'Check peer HTTPS availability and shared configuration; a successful peer wake clears this issue.')];
+                'action'=>strpos($issue['code'],'deletion_')===0?'Un produit source est introuvable. Vérifiez son dernier instantané et la disponibilité de la base ; gardez la correspondance d\'origine. L\'archivage sera retenté, la source ne sera pas recréée.':($issue['code']==='capture_failed'?'Examinez cette fiche et le message de capture ; corrigez les champs non pris en charge ou invalides. Une nouvelle capture réussie lève l\'alerte.':'Vérifiez l\'accès HTTPS à la boutique partenaire et la configuration commune ; un échange réussi lève l\'alerte.')];
         }
-        return ['ok'=>!$issues,'mode'=>$mode,'worker_age_seconds'=>$workerAge,'queue'=>$queue,'issues'=>$issues];
+        return ['ok'=>!$issues,'mode'=>$mode,'configured_mode'=>$configured,'licence'=>$this->licence()->gate($now)[1],'worker_age_seconds'=>$workerAge,'queue'=>$queue,'issues'=>$issues];
+    }
+
+    private function licenceIssues(string $configured, int $now): array
+    {
+        $licence=$this->licence(); [$live,$reason]=$licence->gate($now); $state=$licence->state(); $issues=[];
+        if ($configured==='live' && !$live) {
+            $issues[]=['code'=>'licence_paused','severity'=>'error','action'=>'Le mode live est suspendu par la licence ('.$reason.') : les événements reçus sont conservés, rien n\'est appliqué. Saisissez ou renouvelez la clé ; le mode live reprend au passage suivant du worker.'];
+        } elseif (in_array($reason,['missing','unverified'],true)) {
+            $issues[]=['code'=>'licence_missing','severity'=>'warning','action'=>'Saisissez la clé de licence (plugins.inklura.fr/compte) avant le '.gmdate('d/m/Y',$licence->graceEnds()).' ; le mode live passera ensuite en audit.'];
+        } elseif (in_array($reason,['expired','seats_exhausted'],true)) {
+            $issues[]=['code'=>'licence_'.$reason,'severity'=>'warning','action'=>(string)($state['message']??'Vérifiez la licence dans l\'espace client.')];
+        }
+        if (($state['key']??'')!=='' && (int)($state['failures']??0)>0 && $now-(int)($state['checked_at']??0)>3*86400) {
+            $issues[]=['code'=>'licence_unreachable','severity'=>'warning','action'=>'Le serveur de licence ne répond plus depuis plusieurs jours ('.($state['last_error']??'').'). Rien ne change en attendant ; vérifiez la sortie HTTPS vers plugins.inklura.fr.'];
+        }
+        return $issues;
     }
 
     public function report(): array

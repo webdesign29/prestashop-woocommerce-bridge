@@ -48,6 +48,13 @@ final class PrestaAdapter
 
     public function prefix(): string { return _DB_PREFIX_; }
     public function config(): array { return json_decode((string) \Configuration::get('WD29_BRIDGE_CONFIG'), true) ?: ['mode' => 'disabled']; }
+    public function licenceState(?array $state=null): array
+    {
+        if ($state!==null) { \Configuration::updateValue('WD29_BRIDGE_LICENCE',json_encode($state)); return $state; }
+        return json_decode((string)\Configuration::get('WD29_BRIDGE_LICENCE'),true)?:[];
+    }
+    public function siteUrl(): string { return \Tools::getShopDomainSsl(true).__PS_BASE_URI__; }
+    public function pluginVersion(): string { return defined('WD29_WOOBRIDGE_VERSION') ? WD29_WOOBRIDGE_VERSION : '0'; }
     public function workerStatus(?string $state=null): array
     {
         if ($state!==null) { \Configuration::updateValue('WD29_BRIDGE_WORKER',json_encode(['state'=>$state,'at'=>gmdate('c')])); }

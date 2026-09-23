@@ -1,7 +1,11 @@
 <?php
 /** GPL-2.0-or-later. */
 if (!defined('_PS_VERSION_')) { exit; }
+if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.4.0'); }
 require_once __DIR__ . '/includes/Protocol.php';
+require_once __DIR__ . '/includes/Licence.php';
+require_once __DIR__ . '/includes/LicenceAdmin.php';
+require_once __DIR__ . '/includes/ModuleUpdater.php';
 require_once __DIR__ . '/includes/Engine.php';
 require_once __DIR__ . '/includes/AdminDesign.php';
 require_once __DIR__ . '/includes/OrderConflicts.php';
@@ -21,7 +25,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.2.2';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.4.0';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '8.99.99'];
         parent::__construct();
@@ -35,11 +39,15 @@ class Wd29woobridge extends Module
             $this->bridgeEngine = new \WD29\Bridge\Engine($adapter); $adapter->engine = $this->bridgeEngine;
         }
         if (Configuration::get('WD29_BRIDGE_SCHEMA') !== '6') { $this->bridgeEngine->install(); Configuration::updateValue('WD29_BRIDGE_SCHEMA','6'); }
+        // Hooks added after 0.3: stores updated in place never re-run install().
+        if (Configuration::get('WD29_BRIDGE_HOOKS') !== '1' && $this->id) {
+            $this->registerHook('displayBackOfficeHeader'); Configuration::updateValue('WD29_BRIDGE_HOOKS', '1');
+        }
         return $this->bridgeEngine;
     }
     public function install()
     {
-        if (Shop::isFeatureActive() || !extension_loaded('curl')) { $this->_errors[] = 'Single-shop mode and PHP cURL are required.'; return false; }
+        if (Shop::isFeatureActive() || !extension_loaded('curl')) { $this->_errors[] = 'Le mode boutique unique et l\'extension PHP cURL sont nécessaires.'; return false; }
         if (!parent::install()) { return false; }
         $this->bridge()->install();
         $native = [];
@@ -64,7 +72,22 @@ class Wd29woobridge extends Module
             'actionObjectCombinationUpdateAfter','actionUpdateQuantity','actionObjectOrderAddAfter','actionObjectOrderUpdateAfter','actionOrderStatusUpdate','actionOrderStatusPostUpdate'] as $hook) {
             if (!$this->registerHook($hook)) { return false; }
         }
+        $this->registerHook('displayBackOfficeHeader'); Configuration::updateValue('WD29_BRIDGE_HOOKS', '1');
         return true;
+    }
+    /** Back-office banner while live mode is paused or the licence grace period runs. */
+    public function hookDisplayBackOfficeHeader()
+    {
+        try {
+            if (Tools::getValue('configure') === $this->name) { return ''; }
+            $engine = $this->bridge();
+            if (($engine->config()['mode'] ?? 'disabled') === 'disabled') { return ''; }
+            $s = $engine->licence()->summary();
+            if ($s['tone'] === 'ok') { return ''; }
+            $link = $this->context->link->getAdminLink('AdminModules', true, [], ['configure' => $this->name]) . '#wd-licence';
+            $html = '<div class="alert alert-' . ($s['live'] ? 'warning' : 'danger') . '" id="wd29-licence-alert" style="margin:16px 0"><strong>Inklura Sync : ' . $this->escape($s['label']) . '.</strong> ' . $this->escape($s['text']) . ' <a href="' . $this->escape($link) . '">Licence</a></div>';
+            return '<script>document.addEventListener("DOMContentLoaded",function(){if(document.getElementById("wd29-licence-alert"))return;var t=document.querySelector("#main-div .content-div")||document.querySelector("#content");if(!t)return;var d=document.createElement("div");d.innerHTML=' . json_encode($html) . ';t.insertBefore(d.firstChild,t.firstChild);});</script>';
+        } catch (Throwable $e) { return ''; }
     }
     public function uninstall() { return parent::uninstall(); } // Keep mappings, replay protection and order history.
     private function captureLater(string $kind, int $id): void
@@ -94,7 +117,7 @@ class Wd29woobridge extends Module
         $rows = $this->bridge()->sql("SELECT record_key FROM {b}map WHERE kind='order' AND local_id=?", [(int)$p['id_order']]);
         if ($rows && strpos($rows[0]['record_key'], 'woo:') === 0) {
             $allowed = array_values($this->bridge()->config()['mirror_states'] ?? []);
-            if (!in_array((int)$p['newOrderStatus']->id, $allowed, true)) { throw new PrestaShopException('Use a WooCommerce mirror status. Payments, invoices and financial refunds belong on the originating store.'); }
+            if (!in_array((int)$p['newOrderStatus']->id, $allowed, true)) { throw new PrestaShopException('Choisissez un statut miroir WooCommerce : paiements, factures et remboursements se font sur la boutique d\'origine.'); }
         }
     }
     private function escape($value): string { return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8'); }
@@ -102,86 +125,99 @@ class Wd29woobridge extends Module
     {
         $engine = $this->bridge(); $message = '';
         if (Tools::isSubmit('bridge_action')) {
-            if (!hash_equals(Tools::getAdminTokenLite('AdminModules'), (string) Tools::getValue('wd29_token'))) { return $this->displayError('Invalid form token.'); }
+            if (!hash_equals(Tools::getAdminTokenLite('AdminModules'), (string) Tools::getValue('wd29_token'))) { return $this->displayError('Formulaire expiré : rechargez la page.'); }
             try {
                 $action = (string) Tools::getValue('bridge_action');
-                if ($action === 'save') {
+                $licenceMessage = \WD29\Bridge\LicenceAdmin::handle($engine, $action, (string) Tools::getValue('licence_key'));
+                if ($licenceMessage !== null) { $message = $licenceMessage; }
+                elseif ($action === 'licence_update') {
+                    $version = \WD29\Bridge\ModuleUpdater::run($engine, __DIR__, $this->version);
+                    Module::upgradeModuleVersion($this->name, $version);
+                    if (method_exists('Tools', 'clearSf2Cache')) { Tools::clearSf2Cache(); }
+                    $message = 'Module mis à jour en version ' . $version . '. Réglages, correspondances et historique sont conservés.';
+                }
+                elseif ($action === 'save') {
                     $config = $engine->config(); $mode = (string) Tools::getValue('mode');
-                    if (!in_array($mode, ['disabled','audit','live'], true)) { throw new RuntimeException('Invalid mode.'); }
+                    if (!in_array($mode, ['disabled','audit','live'], true)) { throw new RuntimeException('Mode invalide.'); }
                     $peer = trim((string) Tools::getValue('peer')); if ($peer !== '') { \WD29\Bridge\Protocol::publicEndpoint($peer); }
                     $secret = trim((string) Tools::getValue('secret'));
-                    if ($secret !== '' && strlen($secret) < 32) { throw new RuntimeException('Secret must contain at least 32 characters.'); }
+                    if ($secret !== '' && strlen($secret) < 32) { throw new RuntimeException('Le secret partagé doit compter au moins 32 caractères.'); }
                     $engine->validateSettings($mode, $peer, $secret !== '' ? $secret : ($config['secret'] ?? ''));
                     $rate = (string) Tools::getValue('display_tax_rate');
-                    if ($rate !== '' && (!is_numeric($rate) || (float) $rate < 0 || (float) $rate > 100)) { throw new RuntimeException('Invalid tax rate.'); }
+                    if ($rate !== '' && (!is_numeric($rate) || (float) $rate < 0 || (float) $rate > 100)) { throw new RuntimeException('Taux de TVA invalide.'); }
                     $config['mode'] = $mode; $config['peer'] = $peer; if ($secret !== '') { $config['secret'] = $secret; }
                     $policy = (string) Tools::getValue('conflict_policy');
-                    if (!in_array($policy, ['review','woo','ps'], true)) { throw new RuntimeException('Invalid conflict policy.'); } $config['conflict_policy'] = $policy;
+                    if (!in_array($policy, ['review','woo','ps'], true)) { throw new RuntimeException('Règle de conflit invalide.'); } $config['conflict_policy'] = $policy;
                     $config['display_tax_rate'] = $rate; $config['display_basis'] = Tools::getValue('display_basis') === 'net' ? 'net' : 'gross';
                     $rules = json_decode((string)Tools::getValue('tax_rules', '{}'), true);
-                    if (!is_array($rules)) { throw new RuntimeException('Tax mappings must be a JSON object.'); }
-                    foreach ($rules as $taxRate=>$id) { if (!is_numeric($taxRate) || !is_numeric($id) || (int)$id<1) { throw new RuntimeException('Invalid tax-rule mapping.'); } }
+                    if (!is_array($rules)) { throw new RuntimeException('La correspondance des taxes doit être un objet JSON, par exemple {"20":1}.'); }
+                    foreach ($rules as $taxRate=>$id) { if (!is_numeric($taxRate) || !is_numeric($id) || (int)$id<1) { throw new RuntimeException('Correspondance de taxe invalide.'); } }
                     $config['tax_rules']=$rules; $config['native_customers']=(bool)Tools::getValue('native_customers',false); $config['sync_gallery_removals']=(bool)Tools::getValue('sync_gallery_removals',false);
-                    Configuration::updateValue('WD29_BRIDGE_CONFIG', json_encode($config)); $message = 'Settings saved.';
+                    Configuration::updateValue('WD29_BRIDGE_CONFIG', json_encode($config)); $message = 'Réglages enregistrés.';
                 } elseif ($action === 'restore_gallery') {
-                    $engine->adapter->restoreGallery(trim((string)Tools::getValue('gallery_record',''))); $message='Detached gallery images restored and product captured.';
+                    $engine->adapter->restoreGallery(trim((string)Tools::getValue('gallery_record',''))); $message='Images de galerie rattachées de nouveau ; produit capturé.';
                 } elseif ($action === 'save_mirror_fields') {
                     \WD29\Bridge\FieldMirrorAdmin::save($engine,(string)Tools::getValue('field_record'),(array)Tools::getValue('field_values',[]),(string)Tools::getValue('field_base'));
-                    $message='Custom fields saved and captured.';
+                    $message='Champs personnalisés enregistrés et capturés.';
                 } elseif ($action === 'health') { $message = json_encode($engine->peer(['op' => 'health'])); }
-                elseif ($action === 'tick') { $engine->tick(false); $message = 'Queue processed; inspect results below.'; }
-                elseif ($action === 'retry') { $engine->retry(); $message = 'Failed events queued again.'; }
-                elseif ($action === 'resolve_order_upgrades') { $message = 'Equivalent order updates queued: ' . $engine->retryEquivalentOrderConflicts(); }
-                elseif ($action === 'resolve_catalog') { $engine->retryCatalogConflicts(); $message = 'Catalog conflicts queued with the selected priority.'; }
-                elseif ($action === 'seed_customers') { $message = 'Contacts captured: ' . $engine->seed('customer', max(0, (int) Tools::getValue('offset'))); }
-                elseif ($action === 'seed') { $message = 'Products captured: ' . $engine->seed('product', max(0, (int) Tools::getValue('offset'))); }
+                elseif ($action === 'tick') { $engine->tick(false); $message = 'File traitée : consultez le résultat ci-dessous.'; }
+                elseif ($action === 'retry') { $engine->retry(); $message = 'Événements en échec remis en file.'; }
+                elseif ($action === 'resolve_order_upgrades') { $message = 'Mises à jour de commandes équivalentes remises en file : ' . $engine->retryEquivalentOrderConflicts(); }
+                elseif ($action === 'resolve_catalog') { $engine->retryCatalogConflicts(); $message = 'Conflits de catalogue remis en file avec la priorité choisie.'; }
+                elseif ($action === 'seed_customers') { $message = 'Contacts capturés : ' . $engine->seed('customer', max(0, (int) Tools::getValue('offset'))); }
+                elseif ($action === 'seed') { $message = 'Produits capturés : ' . $engine->seed('product', max(0, (int) Tools::getValue('offset'))); }
             } catch (Throwable $error) { $message = $error->getMessage(); }
         }
         $config = $engine->config();
-        $html = '<div class="panel"><h2>WooCommerce Bridge</h2><p>Audit mode queues incoming changes without writing catalog, stock or orders.</p>';
+        $html = '<div class="panel"><h2>WooCommerce Bridge</h2><p>En mode audit, les modifications reçues sont mises en file sans toucher au catalogue, aux stocks ni aux commandes.</p>';
         if ($message) { $html .= '<p class="alert alert-info">' . $this->escape($message) . '</p>'; }
-        $html .= '<p>Local webhook: <code>' . $this->escape($this->context->link->getModuleLink($this->name, 'webhook', [], true)) . '</code></p>';
+        $html .= '<p>Webhook de cette boutique : <code>' . $this->escape($this->context->link->getModuleLink($this->name, 'webhook', [], true)) . '</code></p>';
         $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '"><label>Mode</label><select name="mode">';
-        foreach (['disabled','audit','live'] as $mode) { $html .= '<option value="' . $mode . '"' . (($config['mode'] ?? '') === $mode ? ' selected' : '') . '>' . $mode . '</option>'; }
-        $html .= '</select><label>WooCommerce webhook</label><input type="url" name="peer" value="' . $this->escape($config['peer'] ?? '') . '">';
-        $html .= '<label>Simultaneous catalog edits — use the same policy on both stores</label><select name="conflict_policy">';
-        foreach (['review'=>'Pause for review','woo'=>'Prefer WooCommerce','ps'=>'Prefer PrestaShop'] as $value=>$label) { $html .= '<option value="'.$value.'"'.(($config['conflict_policy'] ?? 'review')===$value?' selected':'').'>'.$label.'</option>'; }
+        foreach (['disabled' => 'Arrêtée', 'audit' => 'Audit : réception sans écriture', 'live' => 'Synchronisation live'] as $mode => $label) { $html .= '<option value="' . $mode . '"' . (($config['mode'] ?? '') === $mode ? ' selected' : '') . '>' . $label . '</option>'; }
+        $html .= '</select><label>Webhook WooCommerce</label><input type="url" name="peer" value="' . $this->escape($config['peer'] ?? '') . '">';
+        $html .= '<label>Modifications simultanées du catalogue (même règle sur les deux boutiques)</label><select name="conflict_policy">';
+        foreach (['review'=>'Mettre en pause pour examen','woo'=>'Priorité à WooCommerce','ps'=>'Priorité à PrestaShop'] as $value=>$label) { $html .= '<option value="'.$value.'"'.(($config['conflict_policy'] ?? 'review')===$value?' selected':'').'>'.$label.'</option>'; }
         $html .= '</select>';
-        $html .= '<label>Shared secret (blank keeps the current secret)</label><input type="password" name="secret" autocomplete="new-password" value="">';
-        $html .= '<label>Tax rate for source prices without tax information (%) — leave blank until confirmed</label><input name="display_tax_rate" value="' . $this->escape($config['display_tax_rate'] ?? '') . '">';
-        $html .= '<label>Those source prices are</label><select name="display_basis"><option value="gross"' . (($config['display_basis'] ?? 'gross') === 'gross' ? ' selected' : '') . '>Tax inclusive</option><option value="net"' . (($config['display_basis'] ?? '') === 'net' ? ' selected' : '') . '>Tax exclusive</option></select>';
-        $html .= '<label>Tax rate → tax rules group ID, JSON (example: {&quot;20&quot;:1})</label><input name="tax_rules" value="'.$this->escape(json_encode($config['tax_rules'] ?? new stdClass())).'">';
-        $html .= '<label><input type="checkbox" name="native_customers" value="1"'.(!empty($config['native_customers'])?' checked':'').'> Create native accounts for registered source customers (independent passwords; no email merging)</label>';
-        $html .= '<label><input type="checkbox" name="sync_gallery_removals" value="1"'.(!empty($config['sync_gallery_removals'])?' checked':'').'> Detach imported gallery images removed on peer (recoverable; single shop only; files and manual images retained)</label>';
-        $html .= '<button class="btn btn-primary" name="bridge_action" value="save">Save settings</button></form><hr>';
-        $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '"><label>Batch offset</label><input name="offset" type="number" min="0" value="0">';
-        $html .= '<label>Mapped product or variation key</label><input name="gallery_record" placeholder="woo:product:123"><button class="btn btn-default" name="bridge_action" value="restore_gallery">Restore detached gallery images</button><p>Restores retained product images and, for a variation key, its image associations. Captures the product for synchronization.</p>';
-        foreach (['health' => 'Test connection','seed' => 'Capture catalog', 'seed_customers'=>'Capture customer contacts','tick' => 'Process queue','retry' => 'Retry failures','resolve_order_upgrades'=>'Retry equivalent order updates', 'resolve_catalog'=>'Retry catalog conflicts'] as $action => $label) { $html .= '<button class="btn btn-default" name="bridge_action" value="' . $action . '">' . $label . '</button> '; }
-        $html .= '</form>'.\WD29\Bridge\DiagnosticsAdmin::render($engine).'<p>Last historical notice (see diagnostics for current state): ' . $this->escape(Configuration::get('WD29_BRIDGE_NOTICE')) . '</p><h3>Latest events</h3><table class="table"><thead><tr>';
-        foreach (['seq','direction','kind','record_key','state','attempts','error','created_at'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
+        $html .= '<label>Secret partagé (laisser vide pour conserver l\'actuel)</label><input type="password" name="secret" autocomplete="new-password" value="">';
+        $html .= '<label>Taux de TVA des prix reçus sans information fiscale (%) : laissez vide tant qu\'il n\'est pas confirmé</label><input name="display_tax_rate" value="' . $this->escape($config['display_tax_rate'] ?? '') . '">';
+        $html .= '<label>Ces prix sont saisis</label><select name="display_basis"><option value="gross"' . (($config['display_basis'] ?? 'gross') === 'gross' ? ' selected' : '') . '>TTC</option><option value="net"' . (($config['display_basis'] ?? '') === 'net' ? ' selected' : '') . '>HT</option></select>';
+        $html .= '<label>Taux de TVA → identifiant du groupe de règles de taxes, en JSON (exemple : {&quot;20&quot;:1})</label><input name="tax_rules" value="'.$this->escape(json_encode($config['tax_rules'] ?? new stdClass())).'">';
+        $html .= '<label><input type="checkbox" name="native_customers" value="1"'.(!empty($config['native_customers'])?' checked':'').'> Créer des comptes clients natifs pour les clients inscrits de l\'autre boutique (mots de passe indépendants, aucune fusion par e-mail)</label>';
+        $html .= '<label><input type="checkbox" name="sync_gallery_removals" value="1"'.(!empty($config['sync_gallery_removals'])?' checked':'').'> Détacher les images importées retirées chez le partenaire (réversible ; fichiers et images ajoutées à la main conservés)</label>';
+        $html .= '<button class="btn btn-primary" name="bridge_action" value="save">Enregistrer les réglages</button></form><hr>';
+        $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '"><label>Offset du lot (10 fiches par lot)</label><input name="offset" type="number" min="0" value="0">';
+        $html .= '<label>Identité du produit ou de la déclinaison</label><input name="gallery_record" placeholder="woo:product:123"><button class="btn btn-default" name="bridge_action" value="restore_gallery">Rattacher les images détachées</button><p>Rattache les images conservées du produit (et, pour une déclinaison, ses associations d\'images), puis capture le produit.</p>';
+        foreach (['health' => 'Tester la connexion','seed' => 'Capturer le catalogue', 'seed_customers'=>'Capturer les contacts clients','tick' => 'Traiter la file','retry' => 'Relancer les échecs','resolve_order_upgrades'=>'Relancer les mises à jour de commandes équivalentes', 'resolve_catalog'=>'Relancer les conflits de catalogue'] as $action => $label) { $html .= '<button class="btn btn-default" name="bridge_action" value="' . $action . '">' . $label . '</button> '; }
+        $html .= '</form>'.\WD29\Bridge\DiagnosticsAdmin::render($engine).'<p>Dernier message enregistré (l\'état actuel est dans les diagnostics) : ' . $this->escape(Configuration::get('WD29_BRIDGE_NOTICE')) . '</p><h3>Journal des événements</h3><table class="table"><thead><tr>';
+        foreach (['N°','Sens','Type','Identité','État','Essais','Erreur','Créé le'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->report() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
-        $html .= '</tbody></table><h3>Catalog audit</h3><p>Latest transmitted snapshots; unknown stock is not zero. Up to 200 products.</p><table class="table"><thead><tr>';
-        foreach (['source','local_id','name','brands','tags','type','regular','sale','tax','basis','initial_stock_snapshot','identifiers','dimensions_cm','features','variant_images','archived','purchase_price_net','supplier','seo'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
+        $html .= '</tbody></table><h3>Catalogue</h3><p>Derniers instantanés transmis ; un stock inconnu n\'est pas un stock nul. Jusqu\'à 200 produits.</p><table class="table"><thead><tr>';
+        foreach (['Origine','ID local','Nom','Marques','Étiquettes','Type','Prix','Promo','Taxe','Base','Stock initial','Identifiants','Dimensions (cm)','Caractéristiques','Images des déclinaisons','Archivé','Achat HT','Fournisseur','SEO'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->catalogAudit() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
-        $html .= '</tbody></table><h3>Order reconciliation</h3><p>Unlinked historical lines retain source details and receive catalog links once products are available.</p><table class="table"><thead><tr>';
-        foreach (['source','local_id','total','currency','status','lines','unlinked_lines'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
+        $html .= '</tbody></table><h3>Commandes</h3><p>Les lignes historiques sans lien gardent leurs détails d\'origine ; le lien au catalogue se fait dès que le produit existe.</p><table class="table"><thead><tr>';
+        foreach (['Origine','ID local','Total','Devise','Statut','Lignes','Lignes sans lien'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->orderReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
-        $html .= '</tbody></table><h3>Customer contact directory</h3><p>Read-only contact copies edited on their source store. Native accounts are optional; passwords and marketing consents are never copied. No automatic identity merge by email. Up to 200 contacts.</p><table class="table"><thead><tr>';
-        foreach (['source','name','email','phone','company','billing','addresses','shipping','type'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
+        $html .= '</tbody></table><h3>Contacts clients</h3><p>Copies en lecture seule, à modifier sur leur boutique d\'origine. Les comptes natifs sont facultatifs ; mots de passe et consentements marketing ne sont jamais copiés, et l\'e-mail ne sert jamais à fusionner deux fiches. Jusqu\'à 200 contacts.</p><table class="table"><thead><tr>';
+        foreach (['Origine','Nom','E-mail','Téléphone','Société','Facturation','Adresses','Livraison','Type'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->customerReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
-        $html.='</tbody></table><h3>Edit synchronized custom fields</h3><p>Load a mapped product, variant or order key. Only fields already received from WooCommerce can be edited. Values use JSON to retain their type.</p><form method="post"><input type="hidden" name="wd29_token" value="'.$this->escape(Tools::getAdminTokenLite('AdminModules')).'"><label>Record key</label><input name="field_record" value="'.$this->escape(Tools::getValue('field_record','')).'"><button name="bridge_action" value="load_mirror_fields" class="btn btn-default">Load custom fields</button>';
+        $html.='</tbody></table><h3>Modifier les champs personnalisés</h3><p>Chargez l\'identité d\'un produit, d\'une déclinaison ou d\'une commande. Seuls les champs déjà reçus de WooCommerce se modifient ; les valeurs sont en JSON pour garder leur type.</p><form method="post"><input type="hidden" name="wd29_token" value="'.$this->escape(Tools::getAdminTokenLite('AdminModules')).'"><label>Identité de la fiche</label><input name="field_record" value="'.$this->escape(Tools::getValue('field_record','')).'"><button name="bridge_action" value="load_mirror_fields" class="btn btn-default">Charger les champs</button>';
         if (in_array((string)Tools::getValue('bridge_action'),['load_mirror_fields','save_mirror_fields'],true)) {
             try {
                 $fields=\WD29\Bridge\FieldMirrorAdmin::read($engine,(string)Tools::getValue('field_record'));
                 $html.='<input type="hidden" name="field_base" value="'.$this->escape(\WD29\Bridge\Protocol::fingerprint($fields)).'">';
-                foreach ($fields as $id=>$entry) { $html.='<label>'.$this->escape($id).'</label><label><input type="checkbox" name="field_values['.$this->escape($id).'][present]" value="1"'.(!empty($entry['present'])?' checked':'').'> Present</label><textarea name="field_values['.$this->escape($id).'][json]">'.$this->escape(json_encode($entry['value'],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)).'</textarea>'; }
-                if ($fields) { $html.='<button class="btn btn-primary" name="bridge_action" value="save_mirror_fields">Save custom fields</button>'; } else { $html.='<p>No synchronized custom fields for this record.</p>'; }
+                foreach ($fields as $id=>$entry) { $html.='<label>'.$this->escape($id).'</label><label><input type="checkbox" name="field_values['.$this->escape($id).'][present]" value="1"'.(!empty($entry['present'])?' checked':'').'> Présent</label><textarea name="field_values['.$this->escape($id).'][json]">'.$this->escape(json_encode($entry['value'],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)).'</textarea>'; }
+                if ($fields) { $html.='<button class="btn btn-primary" name="bridge_action" value="save_mirror_fields">Enregistrer les champs</button>'; } else { $html.='<p>Aucun champ personnalisé synchronisé pour cette fiche.</p>'; }
             } catch (Throwable $error) { $html.='<p>'.$this->escape($error->getMessage()).'</p>'; }
         }
-        return \WD29\Bridge\AdminDesign::render($html.'</form></div>', $engine, 'ps');
+        $token = '<input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '">';
+        $update = $engine->licence()->updateAvailable();
+        $updateHtml = $update && $engine->licence()->allowsLive() && ($engine->licence()->state()['status'] ?? '') !== ''
+            ? '<form method="post">' . $token . '<p>Version ' . $this->escape($update) . ' disponible (installée : ' . $this->escape($this->version) . '). Archive vérifiée par SHA-256 avant remplacement ; réglages et historique conservés.</p><button class="btn btn-primary" name="bridge_action" value="licence_update">Mettre à jour le module</button></form>'
+            : ($update ? '<p>Version ' . $this->escape($update) . ' disponible : téléchargez-la depuis plugins.inklura.fr/compte.</p>' : '');
+        return \WD29\Bridge\AdminDesign::render($html.'</form>'.\WD29\Bridge\LicenceAdmin::render($engine, $token, $updateHtml).'</div>', $engine, 'ps');
     }
 }

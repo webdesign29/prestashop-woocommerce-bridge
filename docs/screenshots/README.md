@@ -1,12 +1,9 @@
 # Captures de documentation
 
-`configuration.jpg` montre une démonstration isolée du composant `AdminDesign` de la version 0.2.2. Le formulaire utilise des données synthétiques et ne reproduit pas tous les contrôles de l’administration hôte.
+`configuration.jpg` est une capture réelle du panneau de la version 0.4.0, installée dans une boutique jetable (Docker, accessible en local uniquement) sur les domaines fictifs `woo.example.test` et `ps.example.test`.
 
-- Source : `scripts/docs-preview.php`, exécuté en CLI sans démarrer les boutiques.
-- Domaines : uniquement `woo.example.test` et `ps.example.test`.
-- Secret : valeur vide, aucun jeton d’administration ni cookie dans les fichiers.
-- Aucun nom, contact, produit ou montant provenant d’une boutique réelle.
-- Le mode audit et les indicateurs sont fictifs ; ils ne constituent pas une preuve de synchronisation.
-- Capture du navigateur sur une page locale, vérifiée visuellement avant publication. Aucune capture brute d’une boutique cliente n’est incluse.
+- Aucune donnée de boutique réelle, aucun identifiant, jeton, cookie ni clé de licence visible.
+- La synchronisation est arrêtée et aucune licence n'est saisie : l'image montre l'état juste après l'installation.
+- La même procédure produit les captures du guide https://plugins.inklura.fr/docs/licence (scripts dans le dépôt du site, `scripts/docs-captures/`).
 
-Pour reproduire : générer le HTML avec le script, le servir depuis un répertoire temporaire limité à ces fichiers, ouvrir la page localement et capturer le composant. Vérifier l’image et ses métadonnées avant publication. Ne jamais remplacer cette fixture par un export de configuration réelle.
+L'ancien rendu isolé (`scripts/docs-preview.php`) reste disponible pour une démonstration sans boutique.

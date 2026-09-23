@@ -1,6 +1,6 @@
 # Recoverable gallery synchronization
 
-The settings panel provides **Restore detached gallery images**. Enter a mapped product or variation key from the synchronization journal. Restoration uses the worker lock and a database transaction, saves the recovered associations, and captures the parent product for synchronization. No attachment or image file is deleted.
+The settings panel provides **Rattacher les images détachées** (Restore detached gallery images before 0.4). Enter a mapped product or variation key from the synchronization journal. Restoration uses the worker lock and a database transaction, saves the recovered associations, and captures the parent product for synchronization. No attachment or image file is deleted.
 
 Option `sync_gallery_removals` defaults to false. No image file or Image object is deleted. For a single shop, absent bridge-owned imports can be hidden by removing only their `image_shop` association; Image rows, language rows, files and URL-hash mappings remain. Associations are archived inside the existing product bridge snapshot under `gallery_detached` and are restored when the source image returns. Manually added unmapped images remain visible. Multistore removal is refused because image and combination association scopes differ.
 

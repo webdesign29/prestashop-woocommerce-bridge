@@ -43,10 +43,10 @@ No production scheduler has been installed merely by shipping these files. Hosti
 
 ## Technical order upgrades
 
-Use **Retry equivalent order updates** for conflicts introduced by new empty fields or source line identities. The bridge compares full canonical business data and checks actual native mirror financial/address/line values before retrying. It repeats the guard during application. A changed status, amount, address, populated metadata/refund or known line identity remains conflicted. The diagnostics table summarizes differences without exposing customer/custom values. This action never selects a financial winner.
+Use **Relancer les mises à jour de commandes équivalentes** (Retry equivalent order updates before 0.4) for conflicts introduced by new empty fields or source line identities. The bridge compares full canonical business data and checks actual native mirror financial/address/line values before retrying. It repeats the guard during application. A changed status, amount, address, populated metadata/refund or known line identity remains conflicted. The diagnostics table summarizes differences without exposing customer/custom values. This action never selects a financial winner.
 
 ## Deleted products and gallery recovery
 
 Permanent deletion of a mapped original emits an archive marker from its last captured catalog. The mirror is unpublished without changing stock or removing media; stale catalog updates cannot resurrect it. Missing snapshots require review and are diagnosed. A deleted source is never automatically recreated. Use a new source product identity for a deliberate replacement.
 
-Optional gallery removal is reversible through **Restore detached gallery images** with a mapped product/variation key. Files and manual images remain. See GALLERY.md.
+Optional gallery removal is reversible through **Rattacher les images détachées** (Restore detached gallery images before 0.4) with a mapped product/variation key. Files and manual images remain. See GALLERY.md.
