@@ -1,3 +1,12 @@
+# Inklura Sync 0.6.0
+
+- Administration répartie en pages : vue d’ensemble, comparaison et synchronisation, activité, rapports, réglages, licence et mises à jour. Navigation et liens directs conservent les protections natives de chaque plateforme.
+- Comparaison en lecture seule des produits, commandes et contacts dans les deux sens, avec WordPress à gauche et PrestaShop à droite, identification original/copie, écarts par famille et filtre des fiches identiques.
+- Création ou mise à jour individuelle des produits et contacts, y compris lorsque le suivi automatique est arrêté. Les comparaisons périmées, modifications locales et conflits ne sont pas écrasés.
+- Synchronisation complète dans le sens choisi (produits, contacts, commandes) ou d’une seule famille, par requêtes bornées, avec progression, arrêt après la fiche courante et journal copiable. Gardez la page ouverte ; relancer reconnaît les fiches déjà appliquées.
+- Les variantes, images et champs autorisés suivent les produits. Les différences de stock sont signalées séparément : les quantités existantes gardent leur suivi par événements, sans forçage d’inventaire. Les contacts ne créent des comptes natifs que si cette option est déjà activée.
+- Les modes automatiques restent inchangés. Mettre les deux connecteurs à jour en 0.6.0 pour utiliser toutes les comparaisons et les transferts manuels.
+
 # 0.5.2 — PrestaShop
 
 - Décodage des entités HTML des villes WooCommerce avant enregistrement des adresses PrestaShop, pour les commandes importées et les comptes clients optionnels. Une ville contenant `&#8211;` est enregistrée avec son tiret Unicode, sans rejet de validation.

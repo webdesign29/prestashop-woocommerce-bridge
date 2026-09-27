@@ -13,6 +13,8 @@ jobs:
         run: php tests/protocol.php
       - name: Manual order regression checks
         run: php tests/manual-orders.php
+      - name: Product and contact manual sync checks
+        run: php tests/manual-records.php
       - name: Admin context regression checks
         run: php tests/admin-context.php
       - name: Address entity regression checks

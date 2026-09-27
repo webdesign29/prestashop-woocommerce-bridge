@@ -6,6 +6,18 @@ require_once __DIR__ . '/AdminContext.php';
 final class AdminDesign
 {
     private static function e($v): string { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
+    public static function viewUrl(string $view): string
+    {
+        $query=$_GET;unset($query['inklura_demo_section']);$query['wd_view']=$view;
+        foreach(array_keys($query) as $key)if(strpos($key,'manual_')===0||$key==='bridge_action')unset($query[$key]);
+        return '?'.http_build_query($query,'','&',PHP_QUERY_RFC3986);
+    }
+    public static function currentView(): string
+    {
+        $view=$_POST['wd_view']??$_GET['wd_view']??'overview';$action=(string)($_POST['bridge_action']??'');
+        if(strpos($action,'manual_record')===0)$view='sync';elseif(strpos($action,'manual_order')===0)$view='orders';
+        return in_array($view,['overview','sync','orders','activity','reports','settings','licence'],true)?$view:'overview';
+    }
     public static function render(string $html, Engine $engine, string $platform): string
     {
         $doc=new \DOMDocument('1.0','UTF-8'); $previous=libxml_use_internal_errors(true);
@@ -15,11 +27,14 @@ final class AdminDesign
         $body=$doc->getElementsByTagName('body')->item(0); $root=null;
         foreach($body->childNodes as $node){if($node instanceof \DOMElement){$root=$node;break;}}
         if(!$root){return $html;}
+        $view=self::currentView();
+        $forms=new \DOMXPath($doc);foreach($forms->query('//form') as $form){$hidden=$doc->createElement('input');$hidden->setAttribute('type','hidden');$hidden->setAttribute('name','wd_view');$hidden->setAttribute('value',$view);$form->appendChild($hidden);}
         $local=$platform==='ps'?'ps':'woo';$localName=AdminContext::name($local);$remoteName=AdminContext::name($local==='woo'?'ps':'woo');
         // Decorate ownership before serializing sections, preserving forms and tokens.
         $section='';foreach(iterator_to_array($root->childNodes) as $node){if($node instanceof \DOMElement){if(in_array($node->tagName,['h1','h2','h3'],true)){$section=trim($node->textContent);}elseif($node->tagName==='table'){AdminContext::table($node,$section,$local);}}}
         $nodes=iterator_to_array($root->childNodes); $sections=[]; $key='settings';
         $titles=['settings'=>['Réglages','Connexion et règles de synchronisation'],'tools'=>['Actions & maintenance','Traitement des files, captures et reprises'],'Champs personnalisés'=>['Champs personnalisés','Correspondances des métadonnées WooCommerce et ACF'],'Statuts des commandes'=>['Statuts des commandes','Correspondances entre PrestaShop et WooCommerce'],'Diagnostics'=>['Diagnostics','État du traitement et points à examiner'],'Conflits de commandes'=>['Conflits de commandes','Comparer les versions avant une reprise'],'Remboursements & avoirs'=>['Remboursements & avoirs','Suivi des enregistrements de la boutique source'],'Comptes clients liés'=>['Comptes clients liés','Correspondances des comptes natifs'],'Journal des événements'=>['Journal des événements','Les 100 derniers échanges et leur résultat'],'Catalogue'=>['Catalogue','Derniers instantanés transmis · jusqu’à 200 produits'],'Commandes'=>['Commandes','Montants, statuts et correspondances des lignes'],'Contacts clients'=>['Contacts clients','Copies à modifier sur leur boutique d’origine'],'Modifier les champs personnalisés'=>['Modifier les champs personnalisés','Valeurs reçues de WooCommerce']];
+        $titles['Comparer et synchroniser']=['Comparer et synchroniser','Produits, commandes et contacts · dans les deux sens'];
         $titles['Commandes à synchroniser']=['Commandes à synchroniser','Comparer les écarts et rattraper une commande même à l’arrêt'];
         $titles['Catalogue']=['Catalogue suivi sur '.$localName,'Instantanés échangés · originaux et copies importées · jusqu’à 200 produits'];
         $titles['Commandes']=['Commandes suivies sur '.$localName,'Commandes de cette boutique · origine et copie identifiées'];
@@ -41,16 +56,21 @@ final class AdminDesign
         foreach($d['queue'] as $group){if($group['state']==='pending'){$pending+=(int)$group['total'];}else{$blocked+=(int)$group['total'];}}
         $modes=['live'=>'Synchronisation active','audit'=>'Mode audit','disabled'=>'Synchronisation arrêtée'];$mode=$modes[$engine->mode()]??'État inconnu';
         if(($engine->config()['mode']??'')==='live'&&$engine->mode()!=='live'){$mode='Mode audit · licence';}
-        $out='<style>'.file_get_contents(__DIR__.'/admin-design.css').'</style><div id="wd29-admin" class="wd-platform-'.self::e($platform).'"><header class="wd-hero"><div><span class="wd-eyebrow">WEBDESIGN29 · CONNECTEUR E-COMMERCE</span><h1>Inklura Sync · '.self::e($localName).'</h1><p>Vous gérez cette boutique. Chaque fiche indique où elle a été créée et où elle est copiée.</p></div><div class="wd-hero-meta"><span class="wd-badge">'.self::e($mode).'</span><small>Configuration '.($platform==='ps'?'PrestaShop':'WordPress').' · WD29 Bridge</small></div></header>'.AdminContext::stores($engine,$local).$top;
-        $out.='<nav class="wd-nav" aria-label="Sections du connecteur"><a href="#wd-licence">Licence</a><a href="#wd-orders-delta">Commandes à synchroniser</a><a href="#wd-settings">Réglages</a><a href="#wd-tools">Actions &amp; maintenance</a><a href="#wd-reports">Rapports &amp; diagnostics</a></nav><div class="wd-stats">';
+        $out='<style>'.file_get_contents(__DIR__.'/admin-design.css').'</style><div id="wd29-admin" data-wd-view="'.self::e($view).'" class="wd-platform-'.self::e($platform).'"><header class="wd-hero"><div><span class="wd-eyebrow">WEBDESIGN29 · CONNECTEUR E-COMMERCE</span><h1>Inklura Sync · '.self::e($localName).'</h1><p>Vous gérez cette boutique. Chaque fiche indique où elle a été créée et où elle est copiée.</p></div><div class="wd-hero-meta"><span class="wd-badge">'.self::e($mode).'</span><small>Configuration '.($platform==='ps'?'PrestaShop':'WordPress').' · WD29 Bridge</small></div></header>'.AdminContext::stores($engine,$local).$top;
+        $out.='<nav class="wd-nav" aria-label="Pages du connecteur">';
+        foreach(['overview'=>'Vue d’ensemble','sync'=>'Comparer & synchroniser','activity'=>'Activité','reports'=>'Rapports','settings'=>'Réglages','licence'=>'Licence & mises à jour'] as $page=>$label){$out.='<a href="'.self::e(self::viewUrl($page)).'"'.(($view==='orders'?'sync':$view)===$page?' aria-current="page"':'').'>'.self::e($label).'</a>';}
+        $out.='</nav>';
+        if($view==='overview'){$out.='<div class="wd-stats">';
         foreach([['État du suivi',$d['ok']?'À jour':'À vérifier',$d['ok']?'Aucune anomalie détectée':count($d['issues']).' point(s) à examiner'],['En attente',$pending,'Événements à traiter'],['À résoudre',$blocked,'Échecs et conflits'],['Partenaire configuré',$remoteName,'Les rapports ci-dessous concernent '.$localName]] as $stat){$out.='<article class="wd-card wd-stat"><span>'.$stat[0].'</span><strong>'.self::e($stat[1]).'</strong><small>'.self::e($stat[2]).'</small></article>';}
-        $out.='</div>';$index=0;
+        $out.='</div><p><a class="button btn btn-primary" href="'.self::e(self::viewUrl('sync')).'">Comparer les boutiques</a> <a class="button btn btn-default" href="'.self::e(self::viewUrl('activity')).'">Consulter les échanges</a></p>';}$index=0;
         if(isset($sections['Commandes à synchroniser'])){$sections=['Commandes à synchroniser'=>$sections['Commandes à synchroniser']]+$sections;}
-        if($licence!==''){$out.='<details id="wd-licence" class="wd-card wd-section wd-section-licence"'.($ls['tone']!=='ok'?' open':'').'><summary><span><strong>Licence · '.self::e($ls['label']).'</strong><small>'.self::e($ls['hint']!==''?'Clé '.$ls['hint'].($ls['expires']!==''?' · échéance '.$ls['expires']:''):'Clé, état et mises à jour').'</small></span><span class="wd-chevron" aria-hidden="true">⌄</span></summary><div class="wd-section-body">'.$licence.'</div></details>';}
+        if($view==='licence'&&$licence!==''){$out.='<details id="wd-licence" class="wd-card wd-section wd-section-licence"'.' open'.'><summary><span><strong>Licence · '.self::e($ls['label']).'</strong><small>'.self::e($ls['hint']!==''?'Clé '.$ls['hint'].($ls['expires']!==''?' · échéance '.$ls['expires']:''):'Clé, état et mises à jour').'</small></span><span class="wd-chevron" aria-hidden="true">⌄</span></summary><div class="wd-section-body">'.$licence.'</div></details>';}
         foreach($sections as $name=>$content){
-            $index++;$title=$titles[$name]??[$name,'Configuration avancée du connecteur'];$id=$name==='Commandes à synchroniser'?'wd-orders-delta':($name==='settings'?'wd-settings':($name==='tools'?'wd-tools':'wd-report-'.$index));
-            $open=in_array($name,['settings','Diagnostics','Commandes à synchroniser'],true)||($name==='Modifier les champs personnalisés'&&in_array((string)($_POST['bridge_action']??''),['load_mirror_fields','save_mirror_fields'],true))||($name==='Champs personnalisés'&&($_POST['bridge_action']??'')==='save_field_rows');
-            if($index===4){$out.='<div id="wd-reports" class="wd-section-title"><h2>Rapports &amp; diagnostics</h2><p>Fiches suivies sur '.self::e($localName).'. « Créé sur » indique la boutique d’origine ; « copie importée » indique une fiche reçue du partenaire.</p></div>';}
+            $index++;$page=in_array($name,['settings','Champs personnalisés','Statuts des commandes'],true)?'settings':($name==='Comparer et synchroniser'?'sync':($name==='Commandes à synchroniser'?'orders':(in_array($name,['tools','Diagnostics','Conflits de commandes','Journal des événements'],true)?'activity':'reports')));
+            if($page!==$view&&!($view==='overview'&&$name==='Diagnostics'))continue;
+            $title=$titles[$name]??[$name,'Configuration avancée du connecteur'];$id=$name==='Comparer et synchroniser'?'wd-compare':($name==='Commandes à synchroniser'?'wd-orders-delta':($name==='settings'?'wd-settings':($name==='tools'?'wd-tools':'wd-report-'.$index)));
+            $open=in_array($name,['settings','Diagnostics','Commandes à synchroniser','Comparer et synchroniser','tools','Journal des événements'],true)||($name==='Modifier les champs personnalisés'&&in_array((string)($_POST['bridge_action']??''),['load_mirror_fields','save_mirror_fields'],true))||($name==='Champs personnalisés'&&($_POST['bridge_action']??'')==='save_field_rows');
+            if($view==='reports'&&strpos($out,'id="wd-reports"')===false)$out.='<div id="wd-reports" class="wd-section-title"><h2>Rapports</h2><p>Originaux et copies importées sur '.self::e($localName).'.</p></div>';
             $out.='<details id="'.$id.'" class="wd-card wd-section wd-section-'.($name==='settings'?'settings':($name==='tools'?'tools':'report')).'"'.($open?' open':'').'><summary><span><strong>'.self::e($title[0]).'</strong><small>'.self::e($title[1]).'</small></span><span class="wd-chevron" aria-hidden="true">⌄</span></summary><div class="wd-section-body">'.$content.'</div></details>';
         }
         $out.='<footer class="wd-footnote">WD29 · Les rapports affichent les données suivies par le connecteur.</footer></div><script>'.file_get_contents(__DIR__.'/admin-design.js').'</script>';

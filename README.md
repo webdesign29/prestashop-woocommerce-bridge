@@ -136,3 +136,12 @@ Ce script CLI rend le composant de présentation avec une configuration fictive,
 - **0.2.2** : présentation commune des panneaux, indicateurs, rapports repliables, tableaux défilants et badges d’état.
 - **0.2.1** : archivage des sources supprimées, galeries réversibles, contrôle des conflits techniques de commandes, ACF flexible et taxonomies de catalogue.
 - **0.2.0** : champs personnalisés étendus, fournisseurs, registre des remboursements, comptes natifs facultatifs, lignes de commandes stables et diagnostics CLI.
+
+
+## Pages et synchronisation manuelle (0.6)
+
+L’administration propose Vue d’ensemble, Comparer & synchroniser, Activité, Rapports, Réglages et Licence. Les liens directs existants restent utilisables. Mettez les deux plugins en 0.6.0 avant les comparaisons de produits et contacts.
+
+Comparer & synchroniser interroge les deux boutiques, dans le sens choisi, par lots de 20 originaux. Les actions individuelles et les lots complets fonctionnent aussi à l’arrêt/audit sans modifier ces modes. Les lots complets traitent un enregistrement par requête, d’abord les produits puis les contacts et commandes, avec arrêt après la fiche courante et journal copiable. Gardez l’onglet ouvert ; après une interruption, relancer reconnaît les copies identiques. Les conflits et erreurs restent à examiner.
+
+Les variantes, images et champs autorisés suivent leurs produits. Les stocks existants restent gérés par les événements de stock et ne sont pas forcés par ces actions ; leurs écarts sont signalés séparément. Les contacts restent dans le répertoire du plugin sauf activation préalable des comptes natifs. Une comparaison ne crée aucune correspondance ni aucun compte.

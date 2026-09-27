@@ -1,11 +1,12 @@
 <?php
 namespace WD29\Bridge;
 require_once __DIR__.'/ManualOrders.php';
+require_once __DIR__.'/ManualRecords.php';
 
 /** Durable transport and reconciliation. Native platform operations live in adapters. */
 final class Engine
 {
-    use ManualOrders;
+    use ManualOrders, ManualRecords;
     public $adapter;
     public $catalogApplying = false;
     public $orderApplying = false;
@@ -226,6 +227,7 @@ final class Engine
         if ($op === 'health') {
             return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->mode(), 'worker'=>$this->adapter->workerStatus(), 'diagnostics'=>$this->diagnostics()];
         }
+        if (strpos($op,'manual_record')===0) { return $this->manualRecordReceive($message); }
         if (strpos($op,'manual_order')===0) { return $this->manualOrderReceive($message); }
         if (!$this->enabled()) { throw new \RuntimeException('Bridge is disabled.'); }
         if ($op === 'events') {

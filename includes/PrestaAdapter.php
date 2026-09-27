@@ -89,6 +89,15 @@ final class PrestaAdapter
         $field = $kind === 'order' ? 'id_order' : 'id_product';
         return array_map('intval', array_column($this->sql('SELECT ' . $field . ' FROM `' . _DB_PREFIX_ . $table . '` ORDER BY ' . $field . ' LIMIT ' . (int) $offset . ',' . (int) $limit), $field));
     }
+    public function manualContactKeys(int $offset,int $limit): array
+    {
+        return array_column($this->sql('SELECT CONCAT(\'ps:customer:\',c.id_customer) record_key FROM `'._DB_PREFIX_."customer` c WHERE c.deleted=0 AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."wd29_bridge_account_links` l WHERE l.native_id=c.id_customer) AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge') ORDER BY c.id_customer LIMIT ".(int)$offset.','.(int)$limit),'record_key');
+    }
+    public function manualContactOriginal(string $key): bool
+    {
+        if(!preg_match('/^ps:customer:([1-9][0-9]*)$/D',$key,$m))return false;
+        return (bool)$this->sql('SELECT c.id_customer FROM `'._DB_PREFIX_."customer` c WHERE c.id_customer=? AND c.deleted=0 AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."wd29_bridge_account_links` l WHERE l.native_id=c.id_customer) AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge')",[(int)$m[1]]);
+    }
     private function stock(int $pid, int $aid, string $key): array
     {
         $unknown = $this->sql('SELECT quantity,stock_initialized FROM ' . _DB_PREFIX_ . 'wd29_bridge_map WHERE record_key=?', [$key])[0] ?? null;

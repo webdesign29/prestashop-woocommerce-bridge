@@ -1,13 +1,14 @@
 <?php
 /** GPL-2.0-or-later. */
 if (!defined('_PS_VERSION_')) { exit; }
-if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.5.2'); }
+if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.6.0'); }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Licence.php';
 require_once __DIR__ . '/includes/LicenceAdmin.php';
 require_once __DIR__ . '/includes/ModuleUpdater.php';
 require_once __DIR__ . '/includes/Engine.php';
 require_once __DIR__ . '/includes/ManualOrdersAdmin.php';
+require_once __DIR__ . '/includes/ManualRecordsAdmin.php';
 require_once __DIR__ . '/includes/AdminDesign.php';
 require_once __DIR__ . '/includes/OrderConflicts.php';
 require_once __DIR__ . '/includes/CustomerAccounts.php';
@@ -26,7 +27,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.5.2';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.6.0';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.1.99'];
         parent::__construct();
@@ -138,14 +139,17 @@ class Wd29woobridge extends Module
     public function getContent()
     {
         $engine = $this->bridge(); $message = '';
-        $manualInput=[];foreach(['bridge_action','manual_direction','manual_offset','manual_key','manual_hash','manual_destination'] as $field){$manualInput[$field]=Tools::getValue($field,'');}
+        $manualInput=[];foreach(['bridge_action','manual_direction','manual_offset','manual_key','manual_hash','manual_destination','manual_kind','manual_scope','manual_family','manual_index'] as $field){$manualInput[$field]=Tools::getValue($field,'');}
         if (Tools::isSubmit('bridge_action')) {
             if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST' || !$this->adminFormToken((string) Tools::getValue('wd29_token'))) { return $this->displayError('Formulaire expiré : rechargez la page.'); }
             try {
                 $action = (string) Tools::getValue('bridge_action');
+                if($action==='manual_records_batch'){try{$result=\WD29\Bridge\ManualRecordsAdmin::batch($engine,$manualInput);}catch(\Throwable $error){$result=['ok'=>false,'error'=>$error->getMessage()];}header('Cache-Control: private, no-store');header('Content-Type: application/json; charset=utf-8');echo json_encode($result);exit;}
+                $recordMessage=\WD29\Bridge\ManualRecordsAdmin::handle($engine,$manualInput);
                 $licenceMessage = \WD29\Bridge\LicenceAdmin::handle($engine, $action, (string) Tools::getValue('licence_key'));
                 $manualMessage = \WD29\Bridge\ManualOrdersAdmin::handle($engine, $manualInput);
-                if ($manualMessage !== null) { $message=$manualMessage; }
+                if ($recordMessage !== null) { $message=$recordMessage; }
+                elseif ($manualMessage !== null) { $message=$manualMessage; }
                 elseif ($licenceMessage !== null) { $message = $licenceMessage; }
                 elseif ($action === 'licence_update') {
                     $version = \WD29\Bridge\ModuleUpdater::run($engine, __DIR__, $this->version);
@@ -235,6 +239,6 @@ class Wd29woobridge extends Module
         $updateHtml = $update && $engine->licence()->allowsLive() && ($engine->licence()->state()['status'] ?? '') !== ''
             ? '<form method="post">' . $token . '<p>Version ' . $this->escape($update) . ' disponible (installée : ' . $this->escape($this->version) . '). Archive vérifiée par SHA-256 avant remplacement ; réglages et historique conservés.</p><button class="btn btn-primary" name="bridge_action" value="licence_update">Mettre à jour le module</button></form>'
             : ($update ? '<p>Version ' . $this->escape($update) . ' disponible : téléchargez-la depuis plugins.inklura.fr/compte.</p>' : '');
-        return \WD29\Bridge\AdminDesign::render($html.'</form>'.\WD29\Bridge\ManualOrdersAdmin::render($engine,$token,$manualInput).\WD29\Bridge\LicenceAdmin::render($engine, $token, $updateHtml).'</div>', $engine, 'ps');
+        return \WD29\Bridge\AdminDesign::render($html.'</form>'.\WD29\Bridge\ManualRecordsAdmin::render($engine,$token,$manualInput).\WD29\Bridge\ManualOrdersAdmin::render($engine,$token,$manualInput).\WD29\Bridge\LicenceAdmin::render($engine, $token, $updateHtml).'</div>', $engine, 'ps');
     }
 }
