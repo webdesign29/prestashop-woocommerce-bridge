@@ -1,3 +1,9 @@
+# 0.5.2 — PrestaShop
+
+- Décodage des entités HTML des villes WooCommerce avant enregistrement des adresses PrestaShop, pour les commandes importées et les comptes clients optionnels. Une ville contenant `&#8211;` est enregistrée avec son tiret Unicode, sans rejet de validation.
+- Conservation du snapshot original et des contrôles de conflits : les anciennes adresses restent reconnues, toute modification locale réelle impose toujours une revue.
+- Compatible avec le connecteur WordPress 0.5.1 ; aucun changement de mode ni de création de comptes par défaut.
+
 # 0.5.1
 
 - Les deux administrations affichent clairement la boutique consultée et le domaine du partenaire, avec des repères WordPress et PrestaShop constants.

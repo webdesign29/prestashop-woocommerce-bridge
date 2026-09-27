@@ -21,7 +21,7 @@ final class CustomerAccounts
         $customer->company=$data['company'];
         if (!$customer->save()) { throw new \RuntimeException('Native customer account could not be saved.'); }
         foreach (['billing','shipping'] as $kind) {
-            $source=$data[$kind];
+            $source=PrestaAdapter::nativeAddress($data[$kind]);
             if (empty($source['address_1']) || empty($source['city']) || empty($source['country'])) { continue; }
             $country=(int)\Country::getByIso($source['country']);
             if (!$country) { throw new \RuntimeException('Customer address country is not configured.'); }

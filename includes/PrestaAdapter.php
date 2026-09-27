@@ -499,6 +499,21 @@ final class PrestaAdapter
             'country' => \Country::getIsoById((int) $a->id_country), 'state' => $a->id_state ? (new \State((int) $a->id_state))->iso_code : '',
             'email' => $email, 'phone' => $a->phone_mobile ?: $a->phone];
     }
+
+    /** WooCommerce can store typographic entities in city names. Keep the wire snapshot intact. */
+    public static function nativeAddress(array $address): array
+    {
+        if (isset($address['city'])) { $address['city']=html_entity_decode($address['city'],ENT_QUOTES|ENT_HTML5,'UTF-8'); }
+        return $address;
+    }
+
+    public static function assertNativeAddress(array $actual,array $expected): void
+    {
+        // Older mirrors may still contain the literal source entity. Accept both representations,
+        // but never normalize a different locally edited city into the expected one.
+        if (($actual['city']??'')!==($expected['city']??'')) { $expected=self::nativeAddress($expected); }
+        OrderConflicts::assertAddress($actual,$expected);
+    }
     public function contactProfile(string $kind, int $id): array
     {
         $d=['first_name'=>'','last_name'=>'','email'=>'','phone'=>'','company'=>'','billing'=>[],'shipping'=>[],'guest'=>false,'deleted'=>false];
@@ -603,11 +618,11 @@ final class PrestaAdapter
         // Mirror lines already include Woo discounts; native PS discounts are intentionally zero.
         foreach (['total_discounts','total_discounts_tax_incl','total_discounts_tax_excl'] as $field) { OrderConflicts::assertMoney($o->$field,0,$decimals); }
         $customer=new \Customer((int)$o->id_customer);
-        OrderConflicts::assertAddress($this->address((int)$o->id_address_invoice,$customer->email),$snapshot['billing']);
+        self::assertNativeAddress($this->address((int)$o->id_address_invoice,$customer->email),$snapshot['billing']);
         $expectedShipping=empty($snapshot['shipping']['address_1'])?$snapshot['billing']:$snapshot['shipping'];
         // PS guest mirrors use one customer's email for both stored addresses.
         $expectedShipping['email']=$snapshot['billing']['email']??'';
-        OrderConflicts::assertAddress($this->address((int)$o->id_address_delivery,$customer->email),$expectedShipping);
+        self::assertNativeAddress($this->address((int)$o->id_address_delivery,$customer->email),$expectedShipping);
         $items=$o->getOrderDetailList();
         if (count($items)!==count($snapshot['items'])) { throw new \RuntimeException('Native mirror line count changed; explicit order review required.'); }
         $lineMap=[];
@@ -673,6 +688,7 @@ final class PrestaAdapter
             $customer->id_default_group = (int) \Configuration::get('PS_GUEST_GROUP');
             if (!$customer->add()) { throw new \RuntimeException('Guest customer could not be recorded.'); }
             $makeAddress = function (array $row) use ($customer) {
+                $row=self::nativeAddress($row);
                 $a = new \Address(); $a->id_customer = (int) $customer->id; $a->alias = 'Source order';
                 $a->firstname = $row['first_name']; $a->lastname = $row['last_name']; $a->company = $row['company'] ?? '';
                 $a->address1 = $row['address_1']; $a->address2 = $row['address_2'] ?? ''; $a->city = $row['city'];

@@ -15,5 +15,7 @@ jobs:
         run: php tests/manual-orders.php
       - name: Admin context regression checks
         run: php tests/admin-context.php
+      - name: Address entity regression checks
+        run: php tests/address-entities.php
       - name: Build installation archive
         run: python3 scripts/package.py
