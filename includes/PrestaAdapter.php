@@ -539,6 +539,14 @@ final class PrestaAdapter
         }
     }
 
+    /** Native labels for the side-by-side admin comparison; never used for sync hashes. */
+    public function manualOrderSummary(int $id): array
+    {
+        $order=new \Order($id); if (!\Validate::isLoadedObject($order)) { throw new \RuntimeException('Commande introuvable.'); }
+        $state=new \OrderState((int)$order->current_state,$this->lang());
+        return ['number'=>(string)$order->reference,'status'=>(string)$order->current_state,'status_label'=>(string)$state->name,'total'=>(string)$order->total_paid_tax_incl,'currency'=>(new \Currency((int)$order->id_currency))->iso_code];
+    }
+
     public function orderSummary(int $id): array
     {
         $o=new \Order($id); $lines=$o->getOrderDetailList(); $missing=0;

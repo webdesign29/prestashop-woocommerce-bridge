@@ -1,3 +1,10 @@
+# 0.5.1
+
+- Les deux administrations affichent clairement la boutique consultée et le domaine du partenaire, avec des repères WordPress et PrestaShop constants.
+- Comparaison des commandes côte à côte : WordPress à gauche, PrestaShop à droite, références et statuts natifs de chaque boutique, distinction original/copie et destination nommée sur les boutons.
+- Rapports : origine lisible, identifiants de la copie locale, filtres originaux/imports et sens WordPress → PrestaShop ou PrestaShop → WordPress dans le journal.
+- Libellés des captures précisant les boutiques concernées ; la présentation ne change pas les règles de synchronisation.
+
 # 0.5.0
 
 - Nouveau panneau « Commandes à synchroniser » dans les deux plugins : comparaison des commandes originales avec la boutique partenaire, dans les deux sens, par lots de 20.

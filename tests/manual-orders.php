@@ -12,6 +12,7 @@ class ManualAdapter {
  function ids($kind,$offset,$limit){return array_slice(array_keys($this->orders),$offset,$limit);}
  function orderSyncable($id){return isset($this->orders[$id])&&$this->orders[$id]['status']!=='checkout-draft';}
  function order($id){if(!isset($this->orders[$id]))throw new RuntimeException('Missing order');return ['key'=>$this->orders[$id]['key']??$this->engine->identity('order',$id)]+$this->orders[$id];}
+ function manualOrderSummary($id){return ['number'=>'NATIVE-'.$id,'status'=>'native-display','status_label'=>'État natif','total'=>$this->orders[$id]['total'],'currency'=>'EUR'];}
  function orderConflictSnapshot($id){return $this->order($id);}
  function applyOrder($data,$map){$id=$map?(int)$map['local_id']:100+count($this->orders);$this->orders[$id]=$data;$this->writes++;return $id;}
 }
@@ -19,13 +20,13 @@ function check($value,$label){if(!$value)throw new RuntimeException($label);}
 function refuses($f,$label){try{$f();}catch(Throwable $e){return;}throw new RuntimeException($label);}
 $a=new ManualAdapter('woo');$source=new Engine($a);$a->engine=$source;$b=new ManualAdapter('ps');$target=new Engine($b);$b->engine=$target;
 $a->orders[1]=['number'=>'DEMO-1','status'=>'on-hold','total'=>'22.80','currency'=>'EUR','items'=>[['name'=>'Palets','quantity'=>1]],'billing'=>['email'=>'private@example.invalid']];$a->orders[2]=array_merge($a->orders[1],['status'=>'checkout-draft']);
-$scan=$source->manualOrderScan();check(count($scan['rows'])===1,'Draft excluded');check(!str_contains(json_encode($scan),'private@example.invalid'),'No contact details in preview');check(!$source->sql('SELECT * FROM {b}map'),'Preview wrote mappings');$row=$scan['rows'][0];
+$scan=$source->manualOrderScan();check(count($scan['rows'])===1,'Draft excluded');check(!str_contains(json_encode($scan),'private@example.invalid'),'No contact details in preview');check(!$source->sql('SELECT * FROM {b}map'),'Preview wrote mappings');$row=$scan['rows'][0];check($row['summary']['status_label']==='État natif','Native display summary missing');check($row['status']==='on-hold','Display status changed synchronization status');
 $comp=$target->manualOrderCompare([$row])['rows'][0];check($comp['state']==='missing','Missing order not detected');$export=$source->manualOrderExport($row['key'],$row['hash']);
 refuses(fn()=>$source->manualOrderExport($row['key'],str_repeat('0',64)),'Stale source accepted');refuses(fn()=>$source->manualOrderExport('ps:order:1',$row['hash']),'Wrong source accepted');
 Licence::$allowed=false;refuses(fn()=>$target->manualOrderApply($export,''),'Unlicensed write accepted');Licence::$allowed=true;
 refuses(fn()=>$target->manualOrderApply(array_merge($export,['hash'=>str_repeat('0',64)]),''),'Invalid payload hash accepted');
 $applied=$target->manualOrderApply($export,'');check($applied['state']==='applied'&&$b->writes===1,'Manual apply while disabled failed');check($source->mode()==='disabled'&&$target->mode()==='disabled','Mode changed');
-check($target->manualOrderApply($export,'')['state']==='same'&&$b->writes===1,'Duplicate apply created another order');$source->manualOrderAck($row['key'],$row['hash'],$export['through']);check($source->mapping($row['key'])['fingerprint']===$row['hash'],'Source acknowledgement not persisted');
+check($target->manualOrderApply($export,'')['state']==='same'&&$b->writes===1,'Duplicate apply created another order');$compared=$target->manualOrderCompare([$row])['rows'][0];check($compared['state']==='same'&&$compared['destination_summary']['status']==='native-display','Native presentation must not affect comparison fingerprints');$source->manualOrderAck($row['key'],$row['hash'],$export['through']);check($source->mapping($row['key'])['fingerprint']===$row['hash'],'Source acknowledgement not persisted');
 $a->orders[1]['status']='processing';$new=$source->manualOrderScan()['rows'][0];check($target->manualOrderCompare([$new])['rows'][0]['state']==='changed','Delta missed source change');$export=$source->manualOrderExport($new['key'],$new['hash']);refuses(fn()=>$target->manualOrderApply($export,''),'Stale destination accepted');
 $b->orders[$applied['local_id']]['total']='999.00';check($target->manualOrderCompare([$new])['rows'][0]['state']==='conflict','Local edit not detected');refuses(fn()=>$target->manualOrderApply($export,$row['hash']),'Local edit overwritten');
 $b->orders[$applied['local_id']]['total']='22.80';$target->manualOrderApply($export,$row['hash']);check($b->writes===2,'Update not applied');

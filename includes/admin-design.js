@@ -4,8 +4,16 @@ root.querySelectorAll('table').forEach(function(table){
  var rows=table.querySelectorAll('tr');if(rows.length<=1){var empty=document.createElement('p');empty.className='wd-empty';empty.textContent='Aucun élément à afficher pour le moment.';table.before(empty);table.hidden=true;return;}
  var wrap=document.createElement('div');wrap.className='wd-table-scroll';wrap.tabIndex=0;wrap.setAttribute('role','region');var section=table.closest('details');wrap.setAttribute('aria-label',section?section.querySelector('summary strong').textContent:'Tableau du connecteur');table.before(wrap);wrap.append(table);
  table.querySelectorAll('th').forEach(function(th){th.scope='col';});
- var heads=Array.from(table.querySelectorAll('tr:first-child th'));var state=heads.findIndex(function(h){return h.textContent.trim()==='state';});
+ var heads=Array.from(table.querySelectorAll('tr:first-child th'));var state=heads.findIndex(function(h){return ['state','État'].includes(h.textContent.trim());});
  if(state>=0)Array.from(rows).slice(1).forEach(function(row){var cell=row.children[state];if(!cell)return;var value=cell.textContent.trim();var badge=document.createElement('span');badge.className='wd-state'+(['applied','delivered'].includes(value)?' wd-state-good':(['failed','conflict'].includes(value)?' wd-state-error':value==='pending'?' wd-state-warn':''));badge.textContent=value;cell.replaceChildren(badge);});
+});
+root.querySelectorAll('[data-wd-origin-filter]').forEach(function(select){
+ var section=select.closest('details'),table=section.querySelector('[data-wd-origin-table]');if(!table||!table.closest('.wd-table-scroll'))return;
+ var count=document.createElement('span');count.className='wd-filter-count';count.setAttribute('aria-live','polite');select.after(count);
+ var rows=Array.from(table.querySelectorAll('tr[data-wd-origin]'));
+ var empty=document.createElement('p');empty.className='wd-empty';empty.textContent='Aucune fiche de cette origine dans ce rapport.';empty.hidden=true;table.closest('.wd-table-scroll').after(empty);
+ function filter(){var visible=0;rows.forEach(function(row){row.hidden=select.value!=='all'&&row.dataset.wdOrigin!==select.value;if(!row.hidden)visible++;});count.textContent=visible+' / '+rows.length+' fiches affichées';empty.hidden=visible!==0||rows.length===0;}
+ select.addEventListener('change',filter);filter();
 });
 var settings=root.querySelector('.wd-section-settings form');if(settings){
  settings.classList.add('wd-form-grid');

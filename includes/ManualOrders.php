@@ -33,7 +33,7 @@ trait ManualOrders
             if(method_exists($this->adapter,'orderSyncable')&&!$this->adapter->orderSyncable((int)$id)){continue;}
             $data=$this->manualSnapshot((int)$id);
             if(strpos($data['key'],$this->adapter->site().':order:')!==0){continue;}
-            $rows[]=['key'=>$data['key'],'hash'=>Protocol::fingerprint($data),'number'=>(string)$data['number'],'status'=>(string)$data['status'],'total'=>(string)$data['total'],'currency'=>(string)$data['currency'],'lines'=>count($data['items']??[]),'fields'=>$this->manualOrderFields($data)];
+            $rows[]=['key'=>$data['key'],'hash'=>Protocol::fingerprint($data),'number'=>(string)$data['number'],'status'=>(string)$data['status'],'total'=>(string)$data['total'],'currency'=>(string)$data['currency'],'lines'=>count($data['items']??[]),'fields'=>$this->manualOrderFields($data),'summary'=>method_exists($this->adapter,'manualOrderSummary')?$this->adapter->manualOrderSummary((int)$id):null];
         }
         return ['ok'=>true,'rows'=>$rows,'offset'=>$offset,'next'=>count($ids)===20?$offset+20:null,'mode'=>$this->config()['mode']??'disabled'];
     }
@@ -55,7 +55,8 @@ trait ManualOrders
             }
             if($this->sql("SELECT seq FROM {b}queue WHERE direction='in' AND record_key=? AND state IN ('failed','conflict') LIMIT 1",[$key])){$status='conflict';}
             $changes=[];if($native&&isset($row['fields'])&&is_array($row['fields'])){foreach($this->manualOrderFields($native) as $label=>$value){if(($row['fields'][$label]??$value)!==$value){$changes[]=$label;}}}
-            $result[]=['key'=>$key,'state'=>$status,'changes'=>$changes,'destination_summary'=>$native?['status'=>$native['status'],'total'=>$native['total'],'currency'=>$native['currency']]:null,'destination'=>$map['fingerprint']??'','local_id'=>$map?(int)$map['local_id']:null];
+            $summary=null;if($map&&method_exists($this->adapter,'manualOrderSummary')){try{$summary=$this->adapter->manualOrderSummary((int)$map['local_id']);}catch(\Throwable $e){/* Keep an unavailable native copy explicit. */}}
+            $result[]=['key'=>$key,'state'=>$status,'changes'=>$changes,'destination_summary'=>$summary,'destination'=>$map['fingerprint']??'','local_id'=>$map?(int)$map['local_id']:null];
         }
         return ['ok'=>true,'rows'=>$result,'mode'=>$this->config()['mode']??'disabled'];
     }

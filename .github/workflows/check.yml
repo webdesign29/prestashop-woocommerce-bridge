@@ -13,5 +13,7 @@ jobs:
         run: php tests/protocol.php
       - name: Manual order regression checks
         run: php tests/manual-orders.php
+      - name: Admin context regression checks
+        run: php tests/admin-context.php
       - name: Build installation archive
         run: python3 scripts/package.py
