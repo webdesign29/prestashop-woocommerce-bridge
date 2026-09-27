@@ -1,9 +1,11 @@
 <?php
 namespace WD29\Bridge;
+require_once __DIR__.'/ManualOrders.php';
 
 /** Durable transport and reconciliation. Native platform operations live in adapters. */
 final class Engine
 {
+    use ManualOrders;
     public $adapter;
     public $catalogApplying = false;
     public $orderApplying = false;
@@ -72,6 +74,7 @@ final class Engine
         $row = $this->sql('SELECT * FROM {b}map WHERE kind=? AND local_id=?', [$kind, $id])[0] ?? null;
         if ($row) { return $row['record_key']; }
         $key = Protocol::key($this->adapter->site(), $kind, $id);
+        if ($this->manualPreview) { return $key; }
         $this->bind($key, $kind, $id);
         return $key;
     }
@@ -99,6 +102,7 @@ final class Engine
 
     public function capture(string $kind, int $id): void
     {
+        if ($kind === 'order' && method_exists($this->adapter, 'orderSyncable') && !$this->adapter->orderSyncable($id)) { return; }
         if (!$this->enabled() || ($kind === 'product' && $this->catalogApplying) || ($kind === 'order' && $this->orderApplying)) { return; }
         if ($kind==='product' && method_exists($this->adapter,'productExists')) {
             $known=$this->sql("SELECT * FROM {b}map WHERE kind='product' AND local_id=?",[$id])[0]??null;
@@ -222,6 +226,7 @@ final class Engine
         if ($op === 'health') {
             return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->mode(), 'worker'=>$this->adapter->workerStatus(), 'diagnostics'=>$this->diagnostics()];
         }
+        if (strpos($op,'manual_order')===0) { return $this->manualOrderReceive($message); }
         if (!$this->enabled()) { throw new \RuntimeException('Bridge is disabled.'); }
         if ($op === 'events') {
             $events = $message['events'] ?? [];

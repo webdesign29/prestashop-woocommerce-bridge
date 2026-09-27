@@ -1,12 +1,13 @@
 <?php
 /** GPL-2.0-or-later. */
 if (!defined('_PS_VERSION_')) { exit; }
-if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.4.0'); }
+if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.5.0'); }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Licence.php';
 require_once __DIR__ . '/includes/LicenceAdmin.php';
 require_once __DIR__ . '/includes/ModuleUpdater.php';
 require_once __DIR__ . '/includes/Engine.php';
+require_once __DIR__ . '/includes/ManualOrdersAdmin.php';
 require_once __DIR__ . '/includes/AdminDesign.php';
 require_once __DIR__ . '/includes/OrderConflicts.php';
 require_once __DIR__ . '/includes/CustomerAccounts.php';
@@ -25,9 +26,9 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.4.0';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.5.0';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
-        $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '8.99.99'];
+        $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.1.99'];
         parent::__construct();
         $this->displayName = 'WD29 WooCommerce Bridge';
         $this->description = 'Direct signed webhooks and catalog reconciliation with WooCommerce.';
@@ -121,15 +122,31 @@ class Wd29woobridge extends Module
         }
     }
     private function escape($value): string { return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8'); }
+    private function adminFormToken(?string $submitted = null)
+    {
+        // Symfony 6 randomizes the encoded CSRF token; compare through its validator.
+        if (version_compare(_PS_VERSION_, '9.0.0', '>=')) {
+            $container = \PrestaShop\PrestaShop\Adapter\SymfonyContainer::getInstance();
+            $manager = $container->get(\Symfony\Component\Security\Csrf\CsrfTokenManagerInterface::class);
+            $id = 'wd29woobridge:' . (int) $this->context->employee->id;
+            return $submitted === null ? $manager->getToken($id)->getValue()
+                : $manager->isTokenValid(new \Symfony\Component\Security\Csrf\CsrfToken($id, $submitted));
+        }
+        $token = Tools::getAdminTokenLite('AdminModules');
+        return $submitted === null ? $token : hash_equals($token, $submitted);
+    }
     public function getContent()
     {
         $engine = $this->bridge(); $message = '';
+        $manualInput=[];foreach(['bridge_action','manual_direction','manual_offset','manual_key','manual_hash','manual_destination'] as $field){$manualInput[$field]=Tools::getValue($field,'');}
         if (Tools::isSubmit('bridge_action')) {
-            if (!hash_equals(Tools::getAdminTokenLite('AdminModules'), (string) Tools::getValue('wd29_token'))) { return $this->displayError('Formulaire expiré : rechargez la page.'); }
+            if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST' || !$this->adminFormToken((string) Tools::getValue('wd29_token'))) { return $this->displayError('Formulaire expiré : rechargez la page.'); }
             try {
                 $action = (string) Tools::getValue('bridge_action');
                 $licenceMessage = \WD29\Bridge\LicenceAdmin::handle($engine, $action, (string) Tools::getValue('licence_key'));
-                if ($licenceMessage !== null) { $message = $licenceMessage; }
+                $manualMessage = \WD29\Bridge\ManualOrdersAdmin::handle($engine, $manualInput);
+                if ($manualMessage !== null) { $message=$manualMessage; }
+                elseif ($licenceMessage !== null) { $message = $licenceMessage; }
                 elseif ($action === 'licence_update') {
                     $version = \WD29\Bridge\ModuleUpdater::run($engine, __DIR__, $this->version);
                     Module::upgradeModuleVersion($this->name, $version);
@@ -172,7 +189,7 @@ class Wd29woobridge extends Module
         $html = '<div class="panel"><h2>WooCommerce Bridge</h2><p>En mode audit, les modifications reçues sont mises en file sans toucher au catalogue, aux stocks ni aux commandes.</p>';
         if ($message) { $html .= '<p class="alert alert-info">' . $this->escape($message) . '</p>'; }
         $html .= '<p>Webhook de cette boutique : <code>' . $this->escape($this->context->link->getModuleLink($this->name, 'webhook', [], true)) . '</code></p>';
-        $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '"><label>Mode</label><select name="mode">';
+        $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape($this->adminFormToken()) . '"><label>Mode</label><select name="mode">';
         foreach (['disabled' => 'Arrêtée', 'audit' => 'Audit : réception sans écriture', 'live' => 'Synchronisation live'] as $mode => $label) { $html .= '<option value="' . $mode . '"' . (($config['mode'] ?? '') === $mode ? ' selected' : '') . '>' . $label . '</option>'; }
         $html .= '</select><label>Webhook WooCommerce</label><input type="url" name="peer" value="' . $this->escape($config['peer'] ?? '') . '">';
         $html .= '<label>Modifications simultanées du catalogue (même règle sur les deux boutiques)</label><select name="conflict_policy">';
@@ -185,7 +202,7 @@ class Wd29woobridge extends Module
         $html .= '<label><input type="checkbox" name="native_customers" value="1"'.(!empty($config['native_customers'])?' checked':'').'> Créer des comptes clients natifs pour les clients inscrits de l\'autre boutique (mots de passe indépendants, aucune fusion par e-mail)</label>';
         $html .= '<label><input type="checkbox" name="sync_gallery_removals" value="1"'.(!empty($config['sync_gallery_removals'])?' checked':'').'> Détacher les images importées retirées chez le partenaire (réversible ; fichiers et images ajoutées à la main conservés)</label>';
         $html .= '<button class="btn btn-primary" name="bridge_action" value="save">Enregistrer les réglages</button></form><hr>';
-        $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '"><label>Offset du lot (10 fiches par lot)</label><input name="offset" type="number" min="0" value="0">';
+        $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape($this->adminFormToken()) . '"><label>Offset du lot (10 fiches par lot)</label><input name="offset" type="number" min="0" value="0">';
         $html .= '<label>Identité du produit ou de la déclinaison</label><input name="gallery_record" placeholder="woo:product:123"><button class="btn btn-default" name="bridge_action" value="restore_gallery">Rattacher les images détachées</button><p>Rattache les images conservées du produit (et, pour une déclinaison, ses associations d\'images), puis capture le produit.</p>';
         foreach (['health' => 'Tester la connexion','seed' => 'Capturer le catalogue', 'seed_customers'=>'Capturer les contacts clients','tick' => 'Traiter la file','retry' => 'Relancer les échecs','resolve_order_upgrades'=>'Relancer les mises à jour de commandes équivalentes', 'resolve_catalog'=>'Relancer les conflits de catalogue'] as $action => $label) { $html .= '<button class="btn btn-default" name="bridge_action" value="' . $action . '">' . $label . '</button> '; }
         $html .= '</form>'.\WD29\Bridge\DiagnosticsAdmin::render($engine).'<p>Dernier message enregistré (l\'état actuel est dans les diagnostics) : ' . $this->escape(Configuration::get('WD29_BRIDGE_NOTICE')) . '</p><h3>Journal des événements</h3><table class="table"><thead><tr>';
@@ -204,7 +221,7 @@ class Wd29woobridge extends Module
         foreach (['Origine','Nom','E-mail','Téléphone','Société','Facturation','Adresses','Livraison','Type'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
         $html .= '</tr></thead><tbody>';
         foreach ($engine->customerReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
-        $html.='</tbody></table><h3>Modifier les champs personnalisés</h3><p>Chargez l\'identité d\'un produit, d\'une déclinaison ou d\'une commande. Seuls les champs déjà reçus de WooCommerce se modifient ; les valeurs sont en JSON pour garder leur type.</p><form method="post"><input type="hidden" name="wd29_token" value="'.$this->escape(Tools::getAdminTokenLite('AdminModules')).'"><label>Identité de la fiche</label><input name="field_record" value="'.$this->escape(Tools::getValue('field_record','')).'"><button name="bridge_action" value="load_mirror_fields" class="btn btn-default">Charger les champs</button>';
+        $html.='</tbody></table><h3>Modifier les champs personnalisés</h3><p>Chargez l\'identité d\'un produit, d\'une déclinaison ou d\'une commande. Seuls les champs déjà reçus de WooCommerce se modifient ; les valeurs sont en JSON pour garder leur type.</p><form method="post"><input type="hidden" name="wd29_token" value="'.$this->escape($this->adminFormToken()).'"><label>Identité de la fiche</label><input name="field_record" value="'.$this->escape(Tools::getValue('field_record','')).'"><button name="bridge_action" value="load_mirror_fields" class="btn btn-default">Charger les champs</button>';
         if (in_array((string)Tools::getValue('bridge_action'),['load_mirror_fields','save_mirror_fields'],true)) {
             try {
                 $fields=\WD29\Bridge\FieldMirrorAdmin::read($engine,(string)Tools::getValue('field_record'));
@@ -213,11 +230,11 @@ class Wd29woobridge extends Module
                 if ($fields) { $html.='<button class="btn btn-primary" name="bridge_action" value="save_mirror_fields">Enregistrer les champs</button>'; } else { $html.='<p>Aucun champ personnalisé synchronisé pour cette fiche.</p>'; }
             } catch (Throwable $error) { $html.='<p>'.$this->escape($error->getMessage()).'</p>'; }
         }
-        $token = '<input type="hidden" name="wd29_token" value="' . $this->escape(Tools::getAdminTokenLite('AdminModules')) . '">';
+        $token = '<input type="hidden" name="wd29_token" value="' . $this->escape($this->adminFormToken()) . '">';
         $update = $engine->licence()->updateAvailable();
         $updateHtml = $update && $engine->licence()->allowsLive() && ($engine->licence()->state()['status'] ?? '') !== ''
             ? '<form method="post">' . $token . '<p>Version ' . $this->escape($update) . ' disponible (installée : ' . $this->escape($this->version) . '). Archive vérifiée par SHA-256 avant remplacement ; réglages et historique conservés.</p><button class="btn btn-primary" name="bridge_action" value="licence_update">Mettre à jour le module</button></form>'
             : ($update ? '<p>Version ' . $this->escape($update) . ' disponible : téléchargez-la depuis plugins.inklura.fr/compte.</p>' : '');
-        return \WD29\Bridge\AdminDesign::render($html.'</form>'.\WD29\Bridge\LicenceAdmin::render($engine, $token, $updateHtml).'</div>', $engine, 'ps');
+        return \WD29\Bridge\AdminDesign::render($html.'</form>'.\WD29\Bridge\ManualOrdersAdmin::render($engine,$token,$manualInput).\WD29\Bridge\LicenceAdmin::render($engine, $token, $updateHtml).'</div>', $engine, 'ps');
     }
 }

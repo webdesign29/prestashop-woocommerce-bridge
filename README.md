@@ -2,7 +2,7 @@
 
 Synchronisation directe **WooCommerce ↔ PrestaShop** : catalogue, stocks, commandes et contacts clients, avec webhooks signés et file d’attente persistante.
 
-**Version : 0.4.0.** Ce dépôt contient le plugin PrestaShop ; installez également le [plugin partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
+**Version : 0.5.0.** Ce dépôt contient le plugin PrestaShop ; installez également le [plugin partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
 
 [Télécharger les archives](https://plugins.inklura.fr/compte) (licence requise) · [Guide d’installation](https://plugins.inklura.fr/docs/licence) · [Exploitation et planificateur](OPERATIONS.md) · [Tests et cas particuliers](ACCEPTANCE.md)
 
@@ -39,7 +39,7 @@ Les contacts se modifient sur leur boutique d’origine. Les mots de passe, rôl
 
 ## Installation et mise en service
 
-Installez `wd29woobridge-0.4.0.zip` depuis le gestionnaire de modules. Ouvrez **Modules → WD29 WooCommerce Bridge → Configurer**. Le dossier technique du module doit rester `wd29woobridge`.
+Installez `wd29woobridge-0.5.0.zip` depuis le gestionnaire de modules. Ouvrez **Modules → WD29 WooCommerce Bridge → Configurer**. Le dossier technique du module doit rester `wd29woobridge`.
 
 1. Installez les deux plugins de la même version.
 2. Configurez une même clé aléatoire d’au moins 32 caractères dans les réglages privés des deux boutiques. Ne la placez jamais dans un dépôt, une capture ou une URL.
@@ -50,6 +50,14 @@ Installez `wd29woobridge-0.4.0.zip` depuis le gestionnaire de modules. Ouvrez **
 7. Installez et vérifiez le worker sur l’hébergement, idéalement chaque minute sur chaque boutique, suivant [OPERATIONS.md](OPERATIONS.md). La présence du fichier CLI n’installe pas un planificateur. WP-Cron seul dépend des visites.
 
 Les statuts PrestaShop inconnus sont créés dans WooCommerce avec leur identifiant et libellé d’origine. Le panneau WordPress permet de les associer à un statut WooCommerce existant, sans transformer cette correspondance en opération de paiement.
+
+## Rattraper une commande manuellement
+
+Mettez les deux plugins à jour en **0.5.0**, puis ouvrez **Commandes à synchroniser**. Choisissez **Comparer WordPress → PrestaShop** ou **Comparer PrestaShop → WordPress**. Le tableau distingue les commandes absentes, identiques, modifiées et en conflit, par lots de 20 ; utilisez **Suivant** pour parcourir les autres commandes.
+
+**Importer cette commande** ou **Envoyer cette commande** applique uniquement la commande choisie et ses coordonnées. Cela fonctionne aussi en mode arrêté ou audit, sans réactiver le suivi automatique ni importer tout le catalogue. Les brouillons de checkout sont exclus. La destination doit avoir une licence autorisant les écritures. Les changements intervenus après la comparaison et les modifications locales du miroir sont protégés : actualisez ou examinez le conflit avant de réessayer.
+
+Compatibilité PrestaShop : **8.2 à 9.1**, avec vérifications natives sur **8.2.8 et 9.1.5**.
 
 ## Licence et mises à jour
 
@@ -86,6 +94,7 @@ Voir [ACCEPTANCE.md](ACCEPTANCE.md) pour la liste des vérifications à effectue
 
 ```sh
 php tests/protocol.php
+php tests/manual-orders.php
 python3 scripts/package.py
 ```
 
@@ -108,6 +117,8 @@ php scripts/docs-preview.php > /tmp/wd29-documentation.html
 Ce script CLI rend le composant de présentation avec une configuration fictive, sans charger WordPress, PrestaShop, une base de données ou un secret. Voir [la provenance des captures](docs/screenshots/README.md). Les captures ne représentent pas un état opérationnel réel.
 
 ## Évolutions récentes
+
+- **0.5.0** : comparaison et synchronisation manuelles des commandes dans les deux sens, y compris à l’arrêt ; exclusion des brouillons ; compatibilité PrestaShop 9.1.
 
 - **0.4.0** : administration entièrement en français (réglages, actions, rapports, messages) ; bandeau de licence dans tout le back-office PrestaShop.
 - **0.3.2** : messages de licence sans répétition, lien Réglages dans la liste des extensions (WordPress).

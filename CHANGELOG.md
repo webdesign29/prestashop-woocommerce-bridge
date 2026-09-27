@@ -1,3 +1,12 @@
+# 0.5.0
+
+- Nouveau panneau « Commandes à synchroniser » dans les deux plugins : comparaison des commandes originales avec la boutique partenaire, dans les deux sens, par lots de 20.
+- Import ou envoi manuel d’une commande absente ou modifiée, même lorsque le suivi automatique est arrêté ou en audit. Le mode automatique reste inchangé ; une licence autorisant les écritures est nécessaire sur la destination.
+- Affichage des écarts de statut, montants, articles, coordonnées, métadonnées et remboursements ; protection contre les modifications concurrentes et les conflits locaux, sans doublon lors d’une nouvelle tentative.
+- Exclusion des brouillons de checkout WooCommerce non validés.
+- Compatibilité PrestaShop 9.1 : validation native des jetons CSRF aléatoires Symfony et remplacement de l’ancienne fonction de réécriture des URL. Vérifié sur PrestaShop 8.2.8 et 9.1.5.
+- Mettez les deux plugins à jour en 0.5.0 avant d’utiliser la comparaison manuelle.
+
 # 0.4.0
 
 - Administration en français : réglages, actions, en-têtes des rapports, diagnostics et messages. Les valeurs techniques (codes de diagnostic, identités, commandes CLI) ne changent pas.

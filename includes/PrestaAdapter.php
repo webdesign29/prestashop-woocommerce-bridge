@@ -265,7 +265,7 @@ final class PrestaAdapter
             $name = html_entity_decode($name, ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $rows = $this->sql('SELECT c.id_category FROM `' . _DB_PREFIX_ . 'category` c JOIN `' . _DB_PREFIX_ . 'category_lang` l ON c.id_category=l.id_category WHERE c.id_parent=? AND l.id_lang=? AND l.id_shop=? AND l.name=?', [$parent, $this->lang(), $this->shop(), $name]);
             if ($rows) { $parent = (int) $rows[0]['id_category']; continue; }
-            $c = new \Category(); $c->name = $this->languages($name); $c->link_rewrite = $this->languages(\Tools::link_rewrite($name) ?: 'category');
+            $c = new \Category(); $c->name = $this->languages($name); $c->link_rewrite = $this->languages(\Tools::str2url($name) ?: 'category');
             $c->id_parent = $parent; $c->active = true; if (!$c->add()) { throw new \RuntimeException('Category creation failed.'); }
             $parent = (int) $c->id;
         }
@@ -339,7 +339,7 @@ final class PrestaAdapter
             }
         }
         $p->name = $this->languages(strip_tags(html_entity_decode($data['name'], ENT_QUOTES | ENT_HTML5, 'UTF-8')));
-        $p->link_rewrite = $this->languages(\Tools::link_rewrite($data['name']) ?: 'product');
+        $p->link_rewrite = $this->languages(\Tools::str2url($data['name']) ?: 'product');
         $p->description = $this->languages(\Tools::purifyHTML($data['description']));
         $p->description_short = $this->languages(\Tools::purifyHTML($data['short_description']));
         $p->reference = $data['sku']; $p->price = $prices['regular']; $p->id_tax_rules_group = $prices['group'];

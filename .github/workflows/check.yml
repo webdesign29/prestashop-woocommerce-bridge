@@ -11,5 +11,7 @@ jobs:
           while IFS= read -r -d '' file; do php -l "$file"; done < <(find . -name '*.php' -not -path './vendor/*' -print0)
       - name: Protocol regression checks
         run: php tests/protocol.php
+      - name: Manual order regression checks
+        run: php tests/manual-orders.php
       - name: Build installation archive
         run: python3 scripts/package.py
