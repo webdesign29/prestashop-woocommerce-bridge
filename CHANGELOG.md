@@ -1,3 +1,9 @@
+# Inklura Sync 0.6.1
+
+- Présentation native de chaque administration : onglets, boutons, tableaux et panneaux WordPress ; onglets, composants de formulaire et panneaux PrestaShop. Les styles et la typographie de la plateforme sont conservés.
+- En-tête compact, suppression de la bannière décorative, identification des deux boutiques et pages de comparaison conservées.
+- Confirmations simples et centrées, contrôles lisibles sur mobile. Aucun changement du protocole, des modes ou des données synchronisées.
+
 # Inklura Sync 0.6.0
 
 - Administration répartie en pages : vue d’ensemble, comparaison et synchronisation, activité, rapports, réglages, licence et mises à jour. Navigation et liens directs conservent les protections natives de chaque plateforme.

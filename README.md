@@ -2,17 +2,15 @@
 
 Synchronisation directe **WooCommerce ↔ PrestaShop** : catalogue, stocks, commandes et contacts clients, avec webhooks signés et file d’attente persistante.
 
-**Version : 0.5.1.** Ce dépôt contient le plugin PrestaShop ; installez également le [plugin partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
+**Version : 0.6.1.** Ce dépôt contient le plugin PrestaShop ; installez également le [plugin partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
 
 [Télécharger les archives](https://plugins.inklura.fr/compte) (licence requise) · [Guide d’installation](https://plugins.inklura.fr/docs/licence) · [Exploitation et planificateur](OPERATIONS.md) · [Tests et cas particuliers](ACCEPTANCE.md)
 
-## Aperçu de la configuration
+## Administration
 
-![Configuration WD29 côté PrestaShop : indicateurs, réglages et rapports repliables](docs/screenshots/configuration.jpg)
+Les pages **Vue d’ensemble**, **Comparer & synchroniser**, **Activité**, **Rapports**, **Réglages** et **Licence & mises à jour** utilisent les composants natifs de la plateforme. L’en-tête distingue la boutique consultée et sa partenaire.
 
-*Capture réelle du panneau de la version 0.4.0 dans une boutique jetable aux domaines fictifs `example.test`, juste après l’installation (synchronisation arrêtée, aucune clé saisie). Aucune donnée de boutique réelle. [Provenance](docs/screenshots/README.md).*
-
-Le panneau regroupe les indicateurs d’état, les réglages de connexion, les actions de maintenance et les rapports repliables. Les tableaux défilants et les badges d’état facilitent la lecture des événements. Les formulaires conservent leurs contrôles d’autorisation et de validation.
+La comparaison affiche les originaux et leurs copies, les écarts de produits, commandes et contacts, puis permet une synchronisation individuelle, par famille ou complète dans le sens choisi. Les protections natives des formulaires, les contrôles de conflits et les modes automatiques sont conservés.
 
 ## Ce qui est synchronisé
 
