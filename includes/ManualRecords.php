@@ -38,18 +38,18 @@ trait ManualRecords
         if($kind==='product')return ['label'=>(string)$data['name'],'detail'=>(string)($data['sku']??'').' · '.count($data['variants']??[]).' variante(s) · '.(string)($data['prices']['regular']??'—').' '.(string)($data['currency']??''),'status'=>(string)($data['status']??'')];
         return ['label'=>trim(($data['first_name']??'').' '.($data['last_name']??'')),'detail'=>!empty($data['guest'])?'Contact invité':'Contact inscrit','status'=>'Répertoire du plugin'];
     }
-    public function manualRecordScan(string $kind,int $offset=0): array
+    public function manualRecordScan(string $kind,int $offset=0,int $limit=20): array
     {
-        $this->manualKind($kind);if($kind==='order')return $this->manualOrderScan($offset);
+        $this->manualKind($kind);if($limit<1||$limit>20)throw new \RuntimeException('Taille du lot invalide.');if($kind==='order')return $this->manualOrderScan($offset,$limit);
         if($offset<0||$offset>10000000)throw new \RuntimeException('Page invalide.');
-        $ids=$kind==='customer'?$this->adapter->manualContactKeys($offset,20):$this->adapter->ids($kind,$offset,20);$rows=[];
+        $ids=$kind==='customer'?$this->adapter->manualContactKeys($offset,$limit):$this->adapter->ids($kind,$offset,$limit);$rows=[];
         foreach($ids as $id){
             $key=$kind==='customer'?(string)$id:Protocol::key($this->adapter->site(),$kind,(int)$id);
             if($kind==='product'){$map=$this->sql('SELECT record_key FROM {b}map WHERE kind=? AND local_id=?',[$kind,(int)$id])[0]??null;if($map&&$map['record_key']!==$key)continue;}
             try{$data=$this->recordSnapshot($kind,$key);$rows[]=['key'=>$key,'hash'=>$this->recordHash($kind,$data),'fields'=>$this->recordFields($kind,$data),'stock'=>$kind==='product'?$this->recordStock($data):null,'summary'=>$this->recordSummary($kind,$data)];}
             catch(\Throwable $e){$rows[]=['key'=>$key,'state'=>'unavailable','error'=>$e->getMessage(),'summary'=>['label'=>$key,'detail'=>'Source à examiner']];}
         }
-        return ['ok'=>true,'rows'=>$rows,'offset'=>$offset,'next'=>count($ids)===20?$offset+20:null,'mode'=>$this->config()['mode']??'disabled'];
+        return ['ok'=>true,'rows'=>$rows,'offset'=>$offset,'next'=>count($ids)===$limit?$offset+$limit:null,'mode'=>$this->config()['mode']??'disabled'];
     }
     public function manualRecordCompare(string $kind,array $rows): array
     {
@@ -72,11 +72,11 @@ trait ManualRecords
         }
         return ['ok'=>true,'rows'=>$result,'mode'=>$this->config()['mode']??'disabled'];
     }
-    public function manualRecordDelta(string $kind,string $direction,int $offset=0): array
+    public function manualRecordDelta(string $kind,string $direction,int $offset=0,int $limit=20): array
     {
         $this->manualKind($kind);if(!in_array($direction,['in','out'],true))throw new \RuntimeException('Sens invalide.');
-        if($kind==='order')return $this->manualOrderDelta($direction,$offset);
-        $scan=$direction==='in'?$this->peer(['op'=>'manual_records_scan','kind'=>$kind,'offset'=>$offset]):$this->manualRecordScan($kind,$offset);
+        if($kind==='order')return $this->manualOrderDelta($direction,$offset,$limit);
+        $scan=$direction==='in'?$this->peer(['op'=>'manual_records_scan','kind'=>$kind,'offset'=>$offset,'limit'=>$limit]):$this->manualRecordScan($kind,$offset,$limit);
         $valid=array_values(array_filter($scan['rows'],static function($r){return ($r['state']??'')!=='unavailable';}));
         $comp=$direction==='in'?$this->manualRecordCompare($kind,$valid):$this->peer(['op'=>'manual_records_compare','kind'=>$kind,'rows'=>$valid]);$states=array_column($comp['rows'],null,'key');
         foreach($scan['rows'] as &$row){if(($row['state']??'')==='unavailable')continue;if(!isset($states[$row['key']]))throw new \RuntimeException('Comparaison incomplète.');$row=array_merge($row,$states[$row['key']]);}unset($row);
@@ -135,7 +135,8 @@ trait ManualRecords
     }
     public function manualRecordBatch(string $scope,string $direction,int $family,int $offset,int $index): array
     {
-        $kinds=$scope==='all'?['product','customer','order']:[$scope];if($family<0||$family>=count($kinds)||$index<0||$index>19)throw new \RuntimeException('Position du traitement invalide.');$kind=$kinds[$family];$delta=$this->manualRecordDelta($kind,$direction,$offset);$row=$delta['rows'][$index]??null;$result=['state'=>'empty','key'=>''];
+        $kinds=$scope==='all'?['product','customer','order']:[$scope];if($family<0||$family>=count($kinds)||$index<0||$index>19)throw new \RuntimeException('Position du traitement invalide.');$kind=$kinds[$family];// One fresh native record per step; older peers may still return their default page.
+        $delta=$this->manualRecordDelta($kind,$direction,$offset,1);$row=$delta['rows'][$index]??null;$result=['state'=>'empty','key'=>''];
         if($row){$result=['state'=>$row['state'],'key'=>$row['key']];if(in_array($row['state'],['missing','changed'],true)){try{$result=$this->manualRecordSync($kind,$direction,$row['key'],$row['hash'],$row['destination'])+['key'=>$row['key']];}catch(\Throwable $e){$result=['key'=>$row['key'],'state'=>'error','error'=>$e->getMessage()];}}elseif($row['state']==='unavailable')$result['error']=$row['error'];}
         $index++;if($index>=count($delta['rows'])){$index=0;if($delta['next']!==null)$offset=$delta['next'];else{$family++;$offset=0;}}
         return ['ok'=>true,'result'=>$result,'done'=>$family>=count($kinds),'cursor'=>['family'=>$family,'offset'=>$offset,'index'=>$index]];
@@ -144,7 +145,7 @@ trait ManualRecords
     {
         $kind=(string)($m['kind']??'');
         switch($m['op']){
-            case 'manual_records_scan':return $this->manualRecordScan($kind,(int)($m['offset']??0));
+            case 'manual_records_scan':return $this->manualRecordScan($kind,(int)($m['offset']??0),(int)($m['limit']??20));
             case 'manual_records_compare':return $this->manualRecordCompare($kind,(array)($m['rows']??[]));
             case 'manual_record_export':return $this->manualRecordExport($kind,(string)($m['key']??''),(string)($m['hash']??''));
             case 'manual_record_apply':return $this->manualRecordApply($kind,(array)($m['export']??[]),(string)($m['destination']??''));

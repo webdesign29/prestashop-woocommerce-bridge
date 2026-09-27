@@ -37,6 +37,7 @@ final class ManualOrdersAdmin
     }
     public static function render(Engine $engine,string $token,array $input): string
     {
+        if(class_exists(AdminDesign::class)&&AdminDesign::currentView()!=='orders'&&!in_array($input['bridge_action']??'',['manual_orders_scan','manual_order_sync'],true))return '';
         $direction=($input['manual_direction']??'in')==='out'?'out':'in';$offset=max(0,min(10000000,(int)($input['manual_offset']??0)));
         $local=$engine->adapter->site();$remote=$local==='woo'?'ps':'woo';
         $source=$direction==='in'?$remote:$local;$target=$source==='woo'?'ps':'woo';

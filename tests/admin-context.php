@@ -1,21 +1,28 @@
 <?php
 namespace WD29\Bridge {
     class Engine {
-        public $adapter;
+        public $adapter; public $diagnosticReads=0; public $reportReads=0;
         public function __construct(string $side) { $this->adapter=new class($side) { private $side;public function __construct($s){$this->side=$s;}public function site(){return $this->side;}public function siteUrl(){return 'https://'.$this->side.'.example.test/';} }; }
         public function config(){return ['mode'=>'audit','peer'=>'https://hidden-user:hidden-password@peer.example.test/webhook?secret=do-not-display'];}
         public function mode(){return 'audit';}
-        public function diagnostics(){return ['ok'=>true,'queue'=>[],'issues'=>[]];}
+        public function diagnostics(){$this->diagnosticReads++;return ['ok'=>true,'queue'=>[],'issues'=>[]];}
+        public function sql($q){$this->reportReads++;return [];}
+        public function orderConflictReport(){$this->reportReads++;return [];}
         public function licence(){return new class {public function summary(){return ['tone'=>'ok','label'=>'Active','hint'=>'','expires'=>''];}};}
         public function manualOrderDelta($direction,$offset){$source=$direction==='out'?$this->adapter->site():($this->adapter->site()==='woo'?'ps':'woo');return ['mode'=>'disabled','destination_mode'=>'disabled','next'=>null,'rows'=>[['key'=>$source.':order:42','hash'=>str_repeat('a',64),'number'=>'SOURCE-42','status'=>'normalized-status','total'=>'12.00','currency'=>'EUR','summary'=>['number'=>'SOURCE-42','status_label'=>'État natif original','total'=>'12.00','currency'=>'EUR'],'destination_summary'=>['number'=>'COPY-87','status_label'=>'État natif copie','total'=>'11.00','currency'=>'EUR'],'local_id'=>87,'destination'=>str_repeat('b',64),'state'=>'changed','changes'=>['montants']]]];}
     }
 }
 namespace {
-require __DIR__.'/../includes/AdminDesign.php';require __DIR__.'/../includes/ManualOrdersAdmin.php';
+require __DIR__.'/../includes/AdminDesign.php';require __DIR__.'/../includes/DiagnosticsAdmin.php';require __DIR__.'/../includes/ManualOrdersAdmin.php';
 function check($ok,$message){if(!$ok)throw new RuntimeException($message);}
 function document($html){$doc=new DOMDocument();@$doc->loadHTML('<meta charset="UTF-8">'.$html);return new DOMXPath($doc);}
 foreach(['woo','ps'] as $side){
- $engine=new \WD29\Bridge\Engine($side);$other=$side==='woo'?'ps':'woo';
+ $engine=new \WD29\Bridge\Engine($side);
+ foreach(['settings','licence','sync','orders'] as $view)check(\WD29\Bridge\DiagnosticsAdmin::render($engine,$view)==='','Unrelated diagnostics rendered');
+ check($engine->diagnosticReads===0&&$engine->reportReads===0,'Hidden diagnostics still query records');
+ \WD29\Bridge\DiagnosticsAdmin::render($engine,'overview');check($engine->diagnosticReads===1&&$engine->reportReads===0,'Overview reads hidden report records');
+ \WD29\Bridge\DiagnosticsAdmin::render($engine,'reports');check($engine->diagnosticReads===1&&$engine->reportReads===2,'Reports also compute hidden diagnostics/conflicts');
+$other=$side==='woo'?'ps':'woo';
  $input='<div><h1>Sync</h1><form><input name="wd29_token" value="nonce-preserved"></form><h2>Catalogue</h2><table><tr><th>Origine</th><th>ID local</th><th>Nom</th></tr><tr><td>'.$side.':product:10</td><td>10</td><td>Original</td></tr><tr><td>'.$other.':product:20</td><td>30</td><td>Copy</td></tr></table><h2>Journal des événements</h2><table><tr><th>Sens</th><th>Identité</th></tr><tr><td>in</td><td>'.$other.':order:1</td></tr><tr><td>out</td><td>'.$side.':order:2</td></tr></table></div>';
  $_GET=['wd_view'=>'settings','page'=>'wd29-bridge','token'=>'native-csrf-token'];$_POST=[];
  $html=\WD29\Bridge\AdminDesign::render($input,$engine,$side);$xp=document($html);

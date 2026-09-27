@@ -1,3 +1,9 @@
+# Inklura Sync 0.6.2
+
+- Les pages d’administration ne chargent plus les rapports et instantanés natifs des autres pages. La vue d’ensemble ne parcourt plus les commandes et remboursements masqués.
+- Chaque étape d’une synchronisation complète ne relit qu’une fiche source au lieu d’une page entière. Les comparaisons conservent leurs lots de 20, et les partenaires plus anciens restent compatibles.
+- Pagination vérifiée avec les copies importées exclues, les pages vides et les conflits ; protections contre les comparaisons périmées et les doublons conservées.
+
 # Inklura Sync 0.6.1
 
 - Présentation native de chaque administration : onglets, boutons, tableaux et panneaux WordPress ; onglets, composants de formulaire et panneaux PrestaShop. Les styles et la typographie de la plateforme sont conservés.

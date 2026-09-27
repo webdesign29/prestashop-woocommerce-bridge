@@ -18,6 +18,7 @@ final class ManualRecordsAdmin
     }
     public static function render(Engine $engine,string $token,array $input,string $batchUrl=''): string
     {
+        if(class_exists(AdminDesign::class)&&AdminDesign::currentView()!=='sync'&&!in_array($input['bridge_action']??'',['manual_records_scan','manual_record_sync'],true))return '';
         $kind=in_array($input['manual_kind']??'',['product','order','customer'],true)?$input['manual_kind']:'product';$direction=($input['manual_direction']??'out')==='in'?'in':'out';$offset=max(0,min(10000000,(int)($input['manual_offset']??0)));
         $local=$engine->adapter->site();$source=$direction==='out'?$local:($local==='woo'?'ps':'woo');$target=$source==='woo'?'ps':'woo';$targetName=AdminContext::name($target);
         $hidden=static function(array $fields)use($token){$html=$token;foreach($fields as $key=>$value)$html.='<input type="hidden" name="'.self::e($key).'" value="'.self::e($value).'">';return $html;};

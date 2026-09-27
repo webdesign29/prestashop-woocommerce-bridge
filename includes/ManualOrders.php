@@ -25,17 +25,18 @@ trait ManualOrders
         foreach($groups as $label=>$keys){$values=[];foreach($keys as $key){$values[$key]=$data[$key]??null;}$result[$label]=Protocol::fingerprint($values);}return $result;
     }
 
-    public function manualOrderScan(int $offset=0): array
+    public function manualOrderScan(int $offset=0,int $limit=20): array
     {
         if ($offset<0 || $offset>10000000) { throw new \RuntimeException('Page invalide.'); }
-        $ids=$this->adapter->ids('order',$offset,20);$rows=[];
+        if($limit<1||$limit>20)throw new \RuntimeException('Taille du lot invalide.');
+        $ids=$this->adapter->ids('order',$offset,$limit);$rows=[];
         foreach($ids as $id){
             if(method_exists($this->adapter,'orderSyncable')&&!$this->adapter->orderSyncable((int)$id)){continue;}
             $data=$this->manualSnapshot((int)$id);
             if(strpos($data['key'],$this->adapter->site().':order:')!==0){continue;}
             $rows[]=['key'=>$data['key'],'hash'=>Protocol::fingerprint($data),'number'=>(string)$data['number'],'status'=>(string)$data['status'],'total'=>(string)$data['total'],'currency'=>(string)$data['currency'],'lines'=>count($data['items']??[]),'fields'=>$this->manualOrderFields($data),'summary'=>method_exists($this->adapter,'manualOrderSummary')?$this->adapter->manualOrderSummary((int)$id):null];
         }
-        return ['ok'=>true,'rows'=>$rows,'offset'=>$offset,'next'=>count($ids)===20?$offset+20:null,'mode'=>$this->config()['mode']??'disabled'];
+        return ['ok'=>true,'rows'=>$rows,'offset'=>$offset,'next'=>count($ids)===$limit?$offset+$limit:null,'mode'=>$this->config()['mode']??'disabled'];
     }
 
     public function manualOrderCompare(array $rows): array
@@ -61,10 +62,10 @@ trait ManualOrders
         return ['ok'=>true,'rows'=>$result,'mode'=>$this->config()['mode']??'disabled'];
     }
 
-    public function manualOrderDelta(string $direction,int $offset=0): array
+    public function manualOrderDelta(string $direction,int $offset=0,int $limit=20): array
     {
         if(!in_array($direction,['in','out'],true)){throw new \RuntimeException('Sens invalide.');}
-        $scan=$direction==='in'?$this->peer(['op'=>'manual_orders_scan','offset'=>$offset]):$this->manualOrderScan($offset);
+        $scan=$direction==='in'?$this->peer(['op'=>'manual_orders_scan','offset'=>$offset,'limit'=>$limit]):$this->manualOrderScan($offset,$limit);
         $comp=$direction==='in'?$this->manualOrderCompare($scan['rows']):$this->peer(['op'=>'manual_orders_compare','rows'=>$scan['rows']]);
         $states=array_column($comp['rows'],null,'key');
         foreach($scan['rows'] as &$row){if(!isset($states[$row['key']])){throw new \RuntimeException('Comparaison incomplète.');}$row=array_merge($row,$states[$row['key']]);}unset($row);
@@ -131,7 +132,7 @@ trait ManualOrders
     private function manualOrderReceive(array $m): array
     {
         switch($m['op']){
-            case 'manual_orders_scan':return $this->manualOrderScan((int)($m['offset']??0));
+            case 'manual_orders_scan':return $this->manualOrderScan((int)($m['offset']??0),(int)($m['limit']??20));
             case 'manual_orders_compare':return $this->manualOrderCompare((array)($m['rows']??[]));
             case 'manual_order_export':return $this->manualOrderExport((string)($m['key']??''),(string)($m['hash']??''));
             case 'manual_order_apply':return $this->manualOrderApply((array)($m['export']??[]),(string)($m['destination']??''));

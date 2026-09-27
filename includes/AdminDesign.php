@@ -74,7 +74,7 @@ final class AdminDesign
             $sections[$key]=($sections[$key]??'').$doc->saveHTML($node);
         }
         $licence=$sections['Licence']??'';unset($sections['Licence']);$ls=$engine->licence()->summary();
-        $d=$engine->diagnostics();$pending=0;$blocked=0;
+        $d=$view==='overview'?$engine->diagnostics():['queue'=>[]];$pending=0;$blocked=0;
         foreach($d['queue'] as $group){if($group['state']==='pending'){$pending+=(int)$group['total'];}else{$blocked+=(int)$group['total'];}}
         $modes=['live'=>'Synchronisation active','audit'=>'Mode audit','disabled'=>'Synchronisation arrêtée'];$mode=$modes[$engine->mode()]??'État inconnu';
         if(($engine->config()['mode']??'')==='live'&&$engine->mode()!=='live'){$mode='Mode audit · licence';}

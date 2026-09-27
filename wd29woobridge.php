@@ -1,7 +1,7 @@
 <?php
 /** GPL-2.0-or-later. */
 if (!defined('_PS_VERSION_')) { exit; }
-if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.6.1'); }
+if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.6.2'); }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Licence.php';
 require_once __DIR__ . '/includes/LicenceAdmin.php';
@@ -27,7 +27,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.6.1';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.6.2';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.1.99'];
         parent::__construct();
@@ -189,6 +189,7 @@ class Wd29woobridge extends Module
                 elseif ($action === 'seed') { $message = 'Produits capturés : ' . $engine->seed('product', max(0, (int) Tools::getValue('offset'))); }
             } catch (Throwable $error) { $message = $error->getMessage(); }
         }
+        $view=\WD29\Bridge\AdminDesign::currentView();
         $config = $engine->config();
         $html = '<div class="panel"><h2>WooCommerce Bridge</h2><p>En mode audit, les modifications reçues sont mises en file sans toucher au catalogue, aux stocks ni aux commandes.</p>';
         if ($message) { $html .= '<p class="alert alert-info">' . $this->escape($message) . '</p>'; }
@@ -209,22 +210,22 @@ class Wd29woobridge extends Module
         $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape($this->adminFormToken()) . '"><label>Offset du lot (10 fiches par lot)</label><input name="offset" type="number" min="0" value="0">';
         $html .= '<label>Identité du produit ou de la déclinaison</label><input name="gallery_record" placeholder="woo:product:123"><button class="btn btn-default" name="bridge_action" value="restore_gallery">Rattacher les images détachées</button><p>Rattache les images conservées du produit (et, pour une déclinaison, ses associations d\'images), puis capture le produit.</p>';
         foreach (['health' => 'Tester la connexion','seed' => 'Catalogue : PrestaShop → WordPress', 'seed_customers'=>'Contacts : PrestaShop → WordPress','tick' => 'Traiter les échanges de PrestaShop','retry' => 'Relancer les échecs','resolve_order_upgrades'=>'Relancer les mises à jour de commandes équivalentes', 'resolve_catalog'=>'Relancer les conflits de catalogue'] as $action => $label) { $html .= '<button class="btn btn-default" name="bridge_action" value="' . $action . '">' . $label . '</button> '; }
-        $html .= '</form>'.\WD29\Bridge\DiagnosticsAdmin::render($engine).'<p>Dernier message enregistré (l\'état actuel est dans les diagnostics) : ' . $this->escape(Configuration::get('WD29_BRIDGE_NOTICE')) . '</p><h3>Journal des événements</h3><table class="table"><thead><tr>';
+        $html .= '</form>'.\WD29\Bridge\DiagnosticsAdmin::render($engine,$view).'<p>Dernier message enregistré (l\'état actuel est dans les diagnostics) : ' . $this->escape(Configuration::get('WD29_BRIDGE_NOTICE')) . '</p><h3>Journal des événements</h3><table class="table"><thead><tr>';
         foreach (['N°','Sens','Type','Identité','État','Essais','Erreur','Créé le'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
         $html .= '</tr></thead><tbody>';
-        foreach ($engine->report() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
+        foreach (($view==='activity'?$engine->report():[]) as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
         $html .= '</tbody></table><h3>Catalogue</h3><p>Derniers instantanés transmis ; un stock inconnu n\'est pas un stock nul. Jusqu\'à 200 produits.</p><table class="table"><thead><tr>';
         foreach (['Origine','ID local','Nom','Marques','Étiquettes','Type','Prix','Promo','Taxe','Base','Stock initial','Identifiants','Dimensions (cm)','Caractéristiques','Images des déclinaisons','Archivé','Achat HT','Fournisseur','SEO'] as $heading) { $html .= '<th>' . $heading . '</th>'; }
         $html .= '</tr></thead><tbody>';
-        foreach ($engine->catalogAudit() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
+        foreach (($view==='reports'?$engine->catalogAudit():[]) as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>' . $this->escape($value) . '</td>'; } $html .= '</tr>'; }
         $html .= '</tbody></table><h3>Commandes</h3><p>Les lignes historiques sans lien gardent leurs détails d\'origine ; le lien au catalogue se fait dès que le produit existe.</p><table class="table"><thead><tr>';
         foreach (['Origine','ID local','Total','Devise','Statut','Lignes','Lignes sans lien'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
         $html .= '</tr></thead><tbody>';
-        foreach ($engine->orderReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
+        foreach (($view==='reports'?$engine->orderReport():[]) as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
         $html .= '</tbody></table><h3>Contacts clients</h3><p>Copies en lecture seule, à modifier sur leur boutique d\'origine. Les comptes natifs sont facultatifs ; mots de passe et consentements marketing ne sont jamais copiés, et l\'e-mail ne sert jamais à fusionner deux fiches. Jusqu\'à 200 contacts.</p><table class="table"><thead><tr>';
         foreach (['Origine','Nom','E-mail','Téléphone','Société','Facturation','Adresses','Livraison','Type'] as $heading) { $html .= '<th>'.$heading.'</th>'; }
         $html .= '</tr></thead><tbody>';
-        foreach ($engine->customerReport() as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
+        foreach (($view==='reports'?$engine->customerReport():[]) as $row) { $html .= '<tr>'; foreach ($row as $value) { $html .= '<td>'.$this->escape($value).'</td>'; } $html .= '</tr>'; }
         $html.='</tbody></table><h3>Modifier les champs personnalisés</h3><p>Chargez l\'identité d\'un produit, d\'une déclinaison ou d\'une commande. Seuls les champs déjà reçus de WooCommerce se modifient ; les valeurs sont en JSON pour garder leur type.</p><form method="post"><input type="hidden" name="wd29_token" value="'.$this->escape($this->adminFormToken()).'"><label>Identité de la fiche</label><input name="field_record" value="'.$this->escape(Tools::getValue('field_record','')).'"><button name="bridge_action" value="load_mirror_fields" class="btn btn-default">Charger les champs</button>';
         if (in_array((string)Tools::getValue('bridge_action'),['load_mirror_fields','save_mirror_fields'],true)) {
             try {
