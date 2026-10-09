@@ -1,4 +1,4 @@
-# WD29 PrestaShop Bridge
+# Inklura Sync pour PrestaShop
 
 Synchronisation directe **WooCommerce ↔ PrestaShop** : catalogue, stocks, commandes et contacts clients, avec webhooks signés et file d’attente persistante.
 
@@ -37,7 +37,7 @@ Les contacts se modifient sur leur boutique d’origine. Les mots de passe, rôl
 
 ## Installation et mise en service
 
-Installez `wd29woobridge-0.5.1.zip` depuis le gestionnaire de modules. Ouvrez **Modules → WD29 WooCommerce Bridge → Configurer**. Le dossier technique du module doit rester `wd29woobridge`.
+Installez `wd29woobridge-0.5.1.zip` depuis le gestionnaire de modules. Ouvrez **Modules → Inklura Sync → Configurer** (recherche « Inklura » dans le gestionnaire de modules). Le dossier technique du module doit rester `wd29woobridge`.
 
 1. Installez les deux plugins de la même version.
 2. Configurez une même clé aléatoire d’au moins 32 caractères dans les réglages privés des deux boutiques. Ne la placez jamais dans un dépôt, une capture ou une URL.

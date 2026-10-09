@@ -100,7 +100,7 @@ final class AdminDesign
             if($view==='reports'&&strpos($out,'id="wd-reports"')===false)$out.='<div id="wd-reports" class="wd-section-title"><h2>Rapports</h2><p>Originaux et copies importées sur '.self::e($localName).'.</p></div>';
             $out.='<details id="'.$id.'" class="wd-card '.$panelClass.' wd-section wd-section-'.($name==='settings'?'settings':($name==='tools'?'tools':'report')).'"'.($open?' open':'').'><summary><span><strong>'.self::e($title[0]).'</strong><small>'.self::e($title[1]).'</small></span><span class="wd-chevron" aria-hidden="true">⌄</span></summary><div class="wd-section-body">'.$content.'</div></details>';
         }
-        $out.='<footer class="wd-footnote">WD29 · Les rapports affichent les données suivies par le connecteur.</footer></div><script>'.file_get_contents(__DIR__.'/admin-design.js').'</script>';
+        $out.='<footer class="wd-footnote">Inklura Sync · Les rapports affichent les données suivies par le connecteur.</footer></div><script>'.file_get_contents(__DIR__.'/admin-design.js').'</script>';
         return $out;
     }
 }

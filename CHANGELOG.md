@@ -1,3 +1,7 @@
+## 0.6.5
+
+- Le connecteur s’affiche sous le nom « Inklura Sync » dans le gestionnaire de modules (recherche « Inklura »), au lieu de « WD29 … Bridge ». Le dossier technique, les réglages, les clés de licence et le protocole entre boutiques sont inchangés : aucune action requise après la mise à jour.
+
 ## 0.6.4
 
 - Panneaux natifs dans les fiches produit, commande et client : état de synchronisation, comparaison à la demande, activité récente et actions individuelles confirmées, sans changer le mode automatique.
