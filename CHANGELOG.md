@@ -1,3 +1,7 @@
+## 0.6.6
+
+- Éditeur affiché : « Inklura » au lieu de « Webdesign29 » (gestionnaire de modules PrestaShop, liste des extensions WordPress). Aucun changement fonctionnel.
+
 ## 0.6.5
 
 - Le connecteur s’affiche sous le nom « Inklura Sync » dans le gestionnaire de modules (recherche « Inklura »), au lieu de « WD29 … Bridge ». Le dossier technique, les réglages, les clés de licence et le protocole entre boutiques sont inchangés : aucune action requise après la mise à jour.

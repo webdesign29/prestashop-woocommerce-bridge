@@ -1,7 +1,7 @@
 <?php
 /** GPL-2.0-or-later. */
 if (!defined('_PS_VERSION_')) { exit; }
-if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.6.5'); }
+if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.6.6'); }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Licence.php';
 require_once __DIR__ . '/includes/LicenceAdmin.php';
@@ -29,8 +29,8 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.6.5';
-        $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.6.6';
+        $this->author = 'Inklura'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.1.99'];
         parent::__construct();
         $this->displayName = 'Inklura Sync';
