@@ -8,7 +8,7 @@ class AdminWd29RecordPanelController extends ModuleAdminController
     /** PS9 checks URL tokens before legacy checkToken. This is authenticated navigation only. */
     private function moduleNavigation(): bool
     {
-        return ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET' && ($_GET['action'] ?? '') === 'module' && \WD29\Bridge\RecordPanelAdmin::canConfigure($this->context);
+        return ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET' && ($_GET['action'] ?? '') === 'module' && \WD29\Bridge\RecordPanelAdmin::canConfigure($this->context, $this->module);
     }
     public function isAnonymousAllowed()
     {
@@ -25,7 +25,7 @@ class AdminWd29RecordPanelController extends ModuleAdminController
     }
     public function viewAccess($disable = false)
     {
-        if (($_GET['action'] ?? '') === 'module') { return \WD29\Bridge\RecordPanelAdmin::canConfigure($this->context); }
+        if (($_GET['action'] ?? '') === 'module') { return \WD29\Bridge\RecordPanelAdmin::canConfigure($this->context, $this->module); }
         $kind = Tools::getValue('kind');
         return is_string($kind) && \WD29\Bridge\RecordPanelAdmin::canRead($this->context, $kind);
     }

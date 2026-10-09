@@ -1,3 +1,7 @@
+## 0.6.8.1
+
+- Liens directs : l’accès est vérifié avec le droit natif « Configurer » du module (le même que le bouton du gestionnaire de modules), y compris sur PrestaShop 8 où ils affichaient encore l’avertissement de jeton.
+
 ## 0.6.8
 
 - Liens directs vers le module, utilisables dans un e-mail ou une documentation : `index.php?controller=AdminWd29RecordPanel&action=module&view=settings` (ou `overview`, `sync`, `activity`, `reports`, `licence`) ouvre la page Inklura Sync demandée sans l’avertissement « Clé de sécurité invalide ». Connexion et droits natifs sur les modules exigés ; aucun jeton dans le lien.
