@@ -22,13 +22,29 @@ final class RecordPanelAdmin
 
     public static function canRead($context, string $kind): bool
     {
-        if (!isset(self::TABS[$kind])) { return false; }
+        return isset(self::TABS[$kind]) && self::employeeCan($context, self::TABS[$kind]);
+    }
+
+    /** Connector pages are module configuration: native module rights are required. */
+    public static function canConfigure($context): bool { return self::employeeCan($context, 'AdminModules'); }
+
+    /** Token-free link for e-mails and notices: resolved after login into the current employee's tokenized module page. */
+    public static function moduleUrl($module, array $input): string
+    {
+        $view = $input['view'] ?? 'overview';
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET' || !is_string($view) || !in_array($view, ['overview','sync','orders','activity','reports','settings','licence'], true)
+            || !$module || !$module->active || !self::canConfigure(\Context::getContext())) { throw new \RuntimeException('Navigation refusée.'); }
+        return (string)\Context::getContext()->link->getAdminLink('AdminModules', true, [], ['configure' => $module->name, 'wd_view' => $view]);
+    }
+
+    private static function employeeCan($context, string $tabClass): bool
+    {
         $employee = $context->employee ?? null; $shop = $context->shop ?? null;
         if (!$employee || !\Validate::isLoadedObject($employee) || !$employee->active || !$employee->isLoggedBack()
             || !$shop || !\Validate::isLoadedObject($shop) || (int)$shop->id < 1
             || \Shop::isFeatureActive() || \Shop::getContext() !== \Shop::CONTEXT_SHOP
             || !$employee->hasAuthOnShop((int)$shop->id)) { return false; }
-        $tab = (int)\Tab::getIdFromClassName(self::TABS[$kind]);
+        $tab = (int)\Tab::getIdFromClassName($tabClass);
         if (!$tab) { return false; }
         $access = \Profile::getProfileAccess((int)$employee->id_profile, $tab);
         return !empty($access['view']) && !empty($access['edit']);

@@ -1,3 +1,8 @@
+## 0.6.8
+
+- Liens directs vers le module, utilisables dans un e-mail ou une documentation : `index.php?controller=AdminWd29RecordPanel&action=module&view=settings` (ou `overview`, `sync`, `activity`, `reports`, `licence`) ouvre la page Inklura Sync demandée sans l’avertissement « Clé de sécurité invalide ». Connexion et droits natifs sur les modules exigés ; aucun jeton dans le lien.
+- WordPress : inchangé (0.6.7).
+
 ## 0.6.7
 
 - Actions requises : quand un réglage ou une décision bloque la synchronisation (taux de TVA à confirmer, boutique prioritaire à choisir en cas de modification simultanée, conflits ou échecs à relancer, traitement automatique arrêté), un bandeau l’indique en haut de toutes les pages du connecteur, avec le bouton qui règle le point en un clic et le lien vers la page concernée.
