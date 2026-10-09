@@ -19,6 +19,8 @@ jobs:
         run: php tests/customer-record-guard.php
       - name: Bounded process and compatibility checks
         run: php tests/processes.php
+      - name: Action alerts and decisions
+        run: php tests/actions-needed.php
       - name: Admin context regression checks
         run: php tests/admin-context.php
       - name: Product editor authorization checks (PrestaShop 8 and 9)

@@ -1,7 +1,7 @@
 <?php
 /** GPL-2.0-or-later. */
 if (!defined('_PS_VERSION_')) { exit; }
-if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.6.6'); }
+if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.6.7'); }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Licence.php';
 require_once __DIR__ . '/includes/LicenceAdmin.php';
@@ -16,6 +16,7 @@ require_once __DIR__ . '/includes/Refunds.php';
 require_once __DIR__ . '/includes/Suppliers.php';
 require_once __DIR__ . '/includes/Gallery.php';
 require_once __DIR__ . '/includes/DiagnosticsAdmin.php';
+require_once __DIR__ . '/includes/ActionsAdmin.php';
 require_once __DIR__ . '/includes/FieldMirrorAdmin.php';
 require_once __DIR__ . '/includes/PrestaAdapter.php';
 require_once __DIR__ . '/includes/ProductLinksAdmin.php';
@@ -29,7 +30,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.6.6';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.6.7';
         $this->author = 'Inklura'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.1.99'];
         parent::__construct();
@@ -89,7 +90,7 @@ class Wd29woobridge extends Module
         Configuration::updateValue('WD29_BRIDGE_RECORD_PANELS', '1');
         return true;
     }
-    /** Back-office banner while live mode is paused or the licence grace period runs. */
+    /** Back-office banners: licence state, and any decision or setting blocking synchronization, with a direct link. */
     public function hookDisplayBackOfficeHeader()
     {
         try {
@@ -97,11 +98,15 @@ class Wd29woobridge extends Module
             if (Tools::getValue('configure') === $this->name) { return ''; }
             $engine = $this->bridge();
             if (($engine->config()['mode'] ?? 'disabled') === 'disabled') { return ''; }
+            $html = '';
             $s = $engine->licence()->summary();
-            if ($s['tone'] === 'ok') { return ''; }
-            $link = $this->context->link->getAdminLink('AdminModules', true, [], ['configure' => $this->name]) . '#wd-licence';
-            $html = '<div class="alert alert-' . ($s['live'] ? 'warning' : 'danger') . '" id="wd29-licence-alert" style="margin:16px 0"><strong>Inklura Sync : ' . $this->escape($s['label']) . '.</strong> ' . $this->escape($s['text']) . ' <a href="' . $this->escape($link) . '">Licence</a></div>';
-            return '<script>document.addEventListener("DOMContentLoaded",function(){if(document.getElementById("wd29-licence-alert"))return;var t=document.querySelector("#main-div .content-div")||document.querySelector("#content");if(!t)return;var d=document.createElement("div");d.innerHTML=' . json_encode($html) . ';t.insertBefore(d.firstChild,t.firstChild);});</script>';
+            if ($s['tone'] !== 'ok') {
+                $link = $this->context->link->getAdminLink('AdminModules', true, [], ['configure' => $this->name, 'wd_view' => 'licence']) . '#wd-licence';
+                $html .= '<div class="alert alert-' . ($s['live'] ? 'warning' : 'danger') . '" id="wd29-licence-alert" style="margin:16px 0"><strong>Inklura Sync : ' . $this->escape($s['label']) . '.</strong> ' . $this->escape($s['text']) . ' <a href="' . $this->escape($link) . '">Licence</a></div>';
+            }
+            $html .= \WD29\Bridge\ActionsAdmin::notice($engine, 'ps', function ($view) { return $this->context->link->getAdminLink('AdminModules', true, [], ['configure' => $this->name, 'wd_view' => $view]); });
+            if ($html === '') { return ''; }
+            return '<script>document.addEventListener("DOMContentLoaded",function(){if(document.getElementById("wd29-bo-alerts"))return;var t=document.querySelector("#main-div .content-div")||document.querySelector("#content");if(!t)return;var d=document.createElement("div");d.id="wd29-bo-alerts";d.innerHTML=' . json_encode($html) . ';t.insertBefore(d,t.firstChild);});</script>';
         } catch (Throwable $e) { return ''; }
     }
     public function hookDisplayAdminProductsExtra($params)
@@ -170,11 +175,14 @@ class Wd29woobridge extends Module
             if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST' || !$this->adminFormToken((string) Tools::getValue('wd29_token'))) { return $this->displayError('Formulaire expiré : rechargez la page.'); }
             try {
                 $action = (string) Tools::getValue('bridge_action');
+                $decisionMessage = \WD29\Bridge\ActionsAdmin::handle($engine, $action, $_POST);
+                if ($decisionMessage !== null) { $message = $decisionMessage; $action = ''; }
                 if($action==='manual_records_batch'){try{$result=\WD29\Bridge\ManualRecordsAdmin::batch($engine,$manualInput);}catch(\Throwable $error){$result=['ok'=>false,'error'=>$error->getMessage()];}header('Cache-Control: private, no-store');header('Content-Type: application/json; charset=utf-8');echo json_encode($result);exit;}
-                $recordMessage=\WD29\Bridge\ManualRecordsAdmin::handle($engine,$manualInput);
+                $recordMessage=$action===''?null:\WD29\Bridge\ManualRecordsAdmin::handle($engine,$manualInput);
                 $licenceMessage = \WD29\Bridge\LicenceAdmin::handle($engine, $action, (string) Tools::getValue('licence_key'));
                 $manualMessage = \WD29\Bridge\ManualOrdersAdmin::handle($engine, $manualInput);
-                if ($recordMessage !== null) { $message=$recordMessage; }
+                if ($action === '') {}
+                elseif ($recordMessage !== null) { $message=$recordMessage; }
                 elseif ($manualMessage !== null) { $message=$manualMessage; }
                 elseif ($licenceMessage !== null) { $message = $licenceMessage; }
                 elseif ($action === 'licence_update') {
@@ -184,7 +192,7 @@ class Wd29woobridge extends Module
                     $message = 'Module mis à jour en version ' . $version . '. Réglages, correspondances et historique sont conservés.';
                 }
                 elseif ($action === 'save') {
-                    $config = $engine->config(); $mode = (string) Tools::getValue('mode');
+                    $config = $engine->config(); $before = $config; $mode = (string) Tools::getValue('mode');
                     if (!in_array($mode, ['disabled','audit','live'], true)) { throw new RuntimeException('Mode invalide.'); }
                     $peer = trim((string) Tools::getValue('peer')); if ($peer !== '') { \WD29\Bridge\Protocol::publicEndpoint($peer); }
                     $secret = trim((string) Tools::getValue('secret'));
@@ -200,7 +208,7 @@ class Wd29woobridge extends Module
                     if (!is_array($rules)) { throw new RuntimeException('La correspondance des taxes doit être un objet JSON, par exemple {"20":1}.'); }
                     foreach ($rules as $taxRate=>$id) { if (!is_numeric($taxRate) || !is_numeric($id) || (int)$id<1) { throw new RuntimeException('Correspondance de taxe invalide.'); } }
                     $config['tax_rules']=$rules; $config['native_customers']=(bool)Tools::getValue('native_customers',false); $config['sync_gallery_removals']=(bool)Tools::getValue('sync_gallery_removals',false);
-                    Configuration::updateValue('WD29_BRIDGE_CONFIG', json_encode($config)); $message = 'Réglages enregistrés.';
+                    Configuration::updateValue('WD29_BRIDGE_CONFIG', json_encode($config)); $message = 'Réglages enregistrés.' . $engine->settingsChanged($before);
                 } elseif ($action === 'restore_gallery') {
                     $engine->adapter->restoreGallery(trim((string)Tools::getValue('gallery_record',''))); $message='Images de galerie rattachées de nouveau ; produit capturé.';
                 } elseif ($action === 'save_mirror_fields') {
@@ -219,6 +227,7 @@ class Wd29woobridge extends Module
         $config = $engine->config();
         $html = '<div class="panel"><h2>WooCommerce Bridge</h2><p>En mode audit, les modifications reçues sont mises en file sans toucher au catalogue, aux stocks ni aux commandes.</p>';
         if ($message) { $html .= '<p class="alert alert-info">' . $this->escape($message) . '</p>'; }
+        $html .= \WD29\Bridge\ActionsAdmin::render($engine, 'ps', '<input type="hidden" name="wd29_token" value="' . $this->escape($this->adminFormToken()) . '">');
         $html .= '<p>Webhook de cette boutique : <code>' . $this->escape($this->context->link->getModuleLink($this->name, 'webhook', [], true)) . '</code></p>';
         $html .= '<form method="post"><input type="hidden" name="wd29_token" value="' . $this->escape($this->adminFormToken()) . '"><label>Mode</label><select name="mode">';
         foreach (['disabled' => 'Arrêtée', 'audit' => 'Audit : réception sans écriture', 'live' => 'Synchronisation live'] as $mode => $label) { $html .= '<option value="' . $mode . '"' . (($config['mode'] ?? '') === $mode ? ' selected' : '') . '>' . $label . '</option>'; }

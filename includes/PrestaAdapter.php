@@ -105,6 +105,13 @@ final class PrestaAdapter
 
     public function prefix(): string { return _DB_PREFIX_; }
     public function config(): array { return json_decode((string) \Configuration::get('WD29_BRIDGE_CONFIG'), true) ?: ['mode' => 'disabled']; }
+    public function saveConfig(array $config): void { \Configuration::updateValue('WD29_BRIDGE_CONFIG', json_encode($config)); }
+    /** Tax rate used by most local products in the shop's default country; null when the catalogue has none. */
+    public function suggestedTaxRate(): ?string
+    {
+        $rows = $this->sql('SELECT t.rate, COUNT(*) total FROM `' . _DB_PREFIX_ . 'product` p JOIN `' . _DB_PREFIX_ . 'tax_rule` r ON r.id_tax_rules_group=p.id_tax_rules_group AND r.id_country=? JOIN `' . _DB_PREFIX_ . 'tax` t ON t.id_tax=r.id_tax WHERE p.id_tax_rules_group>0 AND t.rate>0 GROUP BY t.rate ORDER BY total DESC LIMIT 1', [(int) \Configuration::get('PS_COUNTRY_DEFAULT')]);
+        return $rows ? rtrim(rtrim(number_format((float) $rows[0]['rate'], 3, '.', ''), '0'), '.') : null;
+    }
     public function licenceState(?array $state=null): array
     {
         if ($state!==null) { \Configuration::updateValue('WD29_BRIDGE_LICENCE',json_encode($state)); return $state; }

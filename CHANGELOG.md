@@ -1,3 +1,12 @@
+## 0.6.7
+
+- Actions requises : quand un réglage ou une décision bloque la synchronisation (taux de TVA à confirmer, boutique prioritaire à choisir en cas de modification simultanée, conflits ou échecs à relancer, traitement automatique arrêté), un bandeau l’indique en haut de toutes les pages du connecteur, avec le bouton qui règle le point en un clic et le lien vers la page concernée.
+- Le même avertissement apparaît dans le reste de l’administration (toutes les pages du back-office PrestaShop, notices WordPress) avec un lien direct « Traiter maintenant ».
+- Taux de TVA suggéré : le taux le plus utilisé du catalogue (ou la correspondance unique déjà configurée) est proposé ; il n’est jamais appliqué sans confirmation.
+- Les échanges bloqués par un réglage manquant repartent dès que le réglage est enregistré, sans attendre leurs reprises ni les consommer.
+- La boutique prioritaire choisie d’un côté est appliquée automatiquement à la boutique partenaire (échange signé), et les conflits de catalogue sont relancés des deux côtés.
+- WordPress : l’enregistrement des réglages conserve désormais les autres valeurs de configuration.
+
 ## 0.6.6
 
 - Éditeur affiché : « Inklura » au lieu de « Webdesign29 » (gestionnaire de modules PrestaShop, liste des extensions WordPress). Aucun changement fonctionnel.

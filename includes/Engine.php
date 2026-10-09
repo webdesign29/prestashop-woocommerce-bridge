@@ -255,6 +255,14 @@ final class Engine
         if (strpos($op,'manual_record')===0) { return $this->manualRecordReceive($message); }
         if (strpos($op,'manual_order')===0) { return $this->manualOrderReceive($message); }
         if (!$this->enabled()) { throw new \RuntimeException('Bridge is disabled.'); }
+        if ($op === 'conflict_policy') {
+            // Both stores must share one catalogue priority; the partner's choice is applied here without echoing back.
+            $policy = $message['policy'] ?? '';
+            if (!in_array($policy, ['review','woo','ps'], true)) { throw new \InvalidArgumentException('Invalid conflict policy.'); }
+            $config = $this->config(); $config['conflict_policy'] = $policy; $this->adapter->saveConfig($config);
+            if ($policy !== 'review') { $this->retryCatalogConflicts(); }
+            return ['ok' => true, 'policy' => $policy];
+        }
         if ($op === 'events') {
             $events = $message['events'] ?? [];
             if (!is_array($events) || count($events) > 20) { throw new \RuntimeException('Invalid event batch.'); }
@@ -539,6 +547,115 @@ final class Engine
     {
         if (!in_array($this->config()['conflict_policy'] ?? '', ['woo','ps'], true)) { throw new \RuntimeException('Choose the catalog priority before retrying conflicts.'); }
         $this->sql("UPDATE {b}queue SET state='pending',attempts=0,next_try=0 WHERE state='conflict' AND kind='product'");
+    }
+
+    /** Errors caused by a missing setting, not by a transient failure: they wait for that setting. */
+    const SETTING_ERRORS = ['Confirm the tax rate for source display prices first.' => 'display_tax_rate', 'Tax rate has no unique PrestaShop tax-rule mapping.' => 'tax_rules'];
+
+    /**
+     * Decisions or settings blocking synchronization, each with its direct fix. One grouped query on the
+     * pending_queue index; safe to call on every back-office page.
+     */
+    public function actionsNeeded(?int $now = null): array
+    {
+        $now = $now ?? time(); $config = $this->config();
+        if (($config['mode'] ?? 'disabled') === 'disabled') { return []; }
+        $rows = $this->sql("SELECT state,kind,error,COUNT(*) total FROM {b}queue WHERE direction IN ('in','out') AND state IN ('pending','failed','conflict') AND (state<>'pending' OR attempts>0) GROUP BY state,kind,error");
+        $setting = []; $catalogConflicts = 0; $orderConflicts = 0; $failed = 0;
+        foreach ($rows as $row) {
+            $count = (int) $row['total'];
+            if (isset(self::SETTING_ERRORS[$row['error']])) { $field = self::SETTING_ERRORS[$row['error']]; $setting[$field] = ($setting[$field] ?? 0) + $count; }
+            elseif ($row['state'] === 'conflict') { if ($row['kind'] === 'product') { $catalogConflicts += $count; } else { $orderConflicts += $count; } }
+            elseif ($row['state'] === 'failed') { $failed += $count; }
+        }
+        $actions = [];
+        if (isset($setting['display_tax_rate'])) {
+            $actions[] = ['code' => 'tax_rate_required', 'severity' => 'error', 'count' => $setting['display_tax_rate'], 'decision' => 'tax_rate', 'view' => 'settings', 'suggest' => $this->suggestedTaxRate(),
+                'title' => 'Taux de TVA à confirmer', 'text' => $setting['display_tax_rate'] . ' échange(s) reçu(s) sans information fiscale attendent le taux de TVA à appliquer à leurs prix.'];
+        }
+        if (isset($setting['tax_rules'])) {
+            $actions[] = ['code' => 'tax_mapping_required', 'severity' => 'error', 'count' => $setting['tax_rules'], 'decision' => '', 'view' => 'settings',
+                'title' => 'Groupe de taxes à associer', 'text' => $setting['tax_rules'] . ' échange(s) utilisent un taux sans groupe de règles de taxes unique : renseignez la correspondance taux → groupe dans les réglages.'];
+        }
+        if ($catalogConflicts > 0) {
+            $policy = $config['conflict_policy'] ?? 'review';
+            $actions[] = in_array($policy, ['woo','ps'], true)
+                ? ['code' => 'catalog_conflicts', 'severity' => 'warning', 'count' => $catalogConflicts, 'decision' => 'resolve_catalog', 'view' => 'activity',
+                    'title' => 'Conflits de catalogue à relancer', 'text' => $catalogConflicts . ' produit(s) modifié(s) des deux côtés attendent d\'être relancés avec la priorité choisie.']
+                : ['code' => 'conflict_policy_required', 'severity' => 'error', 'count' => $catalogConflicts, 'decision' => 'conflict_policy', 'view' => 'activity',
+                    'title' => 'Boutique prioritaire à choisir', 'text' => $catalogConflicts . ' produit(s) modifié(s) en même temps sur les deux boutiques. Choisissez la boutique dont la version l\'emporte ; la même règle est appliquée à la boutique partenaire.'];
+        }
+        if ($orderConflicts > 0) {
+            $actions[] = ['code' => 'order_conflicts', 'severity' => 'warning', 'count' => $orderConflicts, 'decision' => '', 'view' => 'activity',
+                'title' => 'Commandes à examiner', 'text' => $orderConflicts . ' mise(s) à jour de commande modifiée(s) des deux côtés : comparez les versions dans l\'activité.'];
+        }
+        if ($failed > 0) {
+            $actions[] = ['code' => 'events_failed', 'severity' => 'error', 'count' => $failed, 'decision' => 'retry', 'view' => 'activity',
+                'title' => 'Échanges en échec', 'text' => $failed . ' échange(s) ont échoué après huit essais. Consultez l\'erreur dans l\'activité, corrigez-la puis relancez.'];
+        }
+        $worker = $this->adapter->workerStatus(); $at = strtotime($worker['at'] ?? '');
+        if ($this->mode() !== 'disabled' && ($at === false || $now - $at > 300)) {
+            $actions[] = ['code' => 'worker_stale', 'severity' => 'error', 'count' => 0, 'decision' => '', 'view' => 'activity',
+                'title' => 'Traitement automatique arrêté', 'text' => 'Aucun passage du worker depuis plus de cinq minutes : ajoutez la tâche planifiée du serveur (une exécution par minute, voir OPERATIONS.md).'];
+        }
+        return $actions;
+    }
+
+    /** Most used tax rate of the local catalogue, else the single configured mapping; never guessed otherwise. */
+    public function suggestedTaxRate(): ?string
+    {
+        $rate = method_exists($this->adapter, 'suggestedTaxRate') ? $this->adapter->suggestedTaxRate() : null;
+        $rules = (array) ($this->config()['tax_rules'] ?? []);
+        if ($rate === null && count($rules) === 1) { $rate = (string) array_key_first($rules); }
+        return $rate;
+    }
+
+    /** Requeues events that only waited for a setting, without consuming their retries. */
+    public function requeueSettingErrors(): int
+    {
+        $marks = implode(',', array_fill(0, count(self::SETTING_ERRORS), '?'));
+        $rows = $this->sql("SELECT COUNT(*) total FROM {b}queue WHERE state IN ('pending','failed') AND (state='failed' OR attempts>0) AND error IN ($marks)", array_keys(self::SETTING_ERRORS));
+        $this->sql("UPDATE {b}queue SET state='pending',attempts=0,next_try=0 WHERE state IN ('pending','failed') AND (state='failed' OR attempts>0) AND error IN ($marks)", array_keys(self::SETTING_ERRORS));
+        return (int) ($rows[0]['total'] ?? 0);
+    }
+
+    /** Follow-up of a settings change: retries what the change unblocks and aligns the partner's catalogue priority. */
+    public function settingsChanged(array $before): string
+    {
+        $after = $this->config(); $notes = [];
+        foreach (['display_tax_rate','display_basis','tax_rules'] as $field) {
+            if (($before[$field] ?? null) !== ($after[$field] ?? null)) { $count = $this->requeueSettingErrors(); if ($count) { $notes[] = $count . ' échange(s) relancé(s)'; } break; }
+        }
+        $policy = $after['conflict_policy'] ?? 'review';
+        if ($policy !== ($before['conflict_policy'] ?? 'review')) {
+            if (in_array($policy, ['woo','ps'], true)) { $this->retryCatalogConflicts(); $notes[] = 'conflits de catalogue relancés'; }
+            try { $this->peer(['op' => 'conflict_policy', 'policy' => $policy], 8); $notes[] = 'même priorité appliquée à la boutique partenaire'; }
+            catch (\Throwable $e) { $notes[] = 'appliquez la même priorité sur la boutique partenaire'; }
+        }
+        return $notes ? ' ' . ucfirst(implode(' ; ', $notes)) . '.' : '';
+    }
+
+    /** One-click decisions offered by the action banner. Returns the confirmation message. */
+    public function decide(string $decision, array $input): string
+    {
+        $before = $this->config(); $config = $before;
+        if ($decision === 'tax_rate') {
+            $rate = trim((string) ($input['rate'] ?? ''));
+            if ($rate === '' || !is_numeric($rate) || (float) $rate < 0 || (float) $rate > 100) { throw new \RuntimeException('Taux de TVA invalide.'); }
+            $config['display_tax_rate'] = $rate; $config['display_basis'] = ($input['basis'] ?? 'gross') === 'net' ? 'net' : 'gross';
+            $this->adapter->saveConfig($config);
+            return 'Taux de TVA confirmé : ' . $rate . ' % ' . ($config['display_basis'] === 'net' ? 'HT' : 'TTC') . '.' . $this->settingsChanged($before);
+        }
+        if ($decision === 'conflict_policy') {
+            $policy = (string) ($input['policy'] ?? '');
+            if (!in_array($policy, ['woo','ps'], true)) { throw new \RuntimeException('Règle de conflit invalide.'); }
+            $config['conflict_policy'] = $policy;
+            $this->adapter->saveConfig($config);
+            return 'Priorité à ' . ($policy === 'ps' ? 'PrestaShop' : 'WooCommerce') . ' enregistrée.' . $this->settingsChanged($before);
+        }
+        if ($decision === 'resolve_catalog') { $this->retryCatalogConflicts(); return 'Conflits de catalogue remis en file avec la priorité choisie.'; }
+        if ($decision === 'retry') { $this->retry(); return 'Événements en échec remis en file.'; }
+        throw new \RuntimeException('Action inconnue.');
     }
 
     /** Latest transmitted snapshots, not a replacement for a live stock count. No customer data. */
