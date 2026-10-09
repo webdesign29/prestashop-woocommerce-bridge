@@ -118,8 +118,9 @@ final class Protocol
     }
 
     /** Pin the resolved public address to prevent DNS rebinding and internal HTTP requests. */
-    public static function request(string $url, string $secret, array $payload): array
+    public static function request(string $url, string $secret, array $payload, int $timeout = 25): array
     {
+        if ($timeout < 1 || $timeout > 25) { throw new \InvalidArgumentException('Invalid request timeout.'); }
         self::publicEndpoint($url);
         $host = parse_url($url, PHP_URL_HOST);
         $addresses = gethostbynamel($host) ?: [];
@@ -138,7 +139,7 @@ final class Protocol
             CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body,
             CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'X-WD29-Timestamp: ' . $timestamp,
                 'X-WD29-Nonce: ' . $nonce, 'X-WD29-Signature: ' . self::sign($body, $secret, $timestamp, $nonce)],
-            CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_TIMEOUT => 25,
+            CURLOPT_CONNECTTIMEOUT => min(5, $timeout), CURLOPT_TIMEOUT => $timeout,
             CURLOPT_FOLLOWLOCATION => false, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, CURLOPT_RESOLVE => [$host . ':443:' . $addresses[0]],
             CURLOPT_WRITEFUNCTION => function ($handle, $chunk) use (&$response) {

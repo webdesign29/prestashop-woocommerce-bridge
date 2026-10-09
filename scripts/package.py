@@ -4,7 +4,7 @@ import hashlib
 import re
 root = Path(__file__).resolve().parents[1]
 slug = 'wd29woobridge'
-files = [root / 'includes' / 'admin-design.css', root / 'includes' / 'admin-design.js'] + [root / name for name in ['wd29woobridge.php', 'README.md', 'CHANGELOG.md', 'LICENSE', 'OPERATIONS.md', 'ACCEPTANCE.md', 'SUPPLIERS.md', 'GALLERY.md']]
+files = [root / 'includes' / 'admin-design.css', root / 'includes' / 'admin-design.js', root / 'includes' / 'product-links-admin.js', root / 'includes' / 'record-panel-admin.js'] + [root / name for name in ['wd29woobridge.php', 'README.md', 'CHANGELOG.md', 'LICENSE', 'OPERATIONS.md', 'ACCEPTANCE.md', 'SUPPLIERS.md', 'GALLERY.md']]
 for directory in ['includes', 'controllers']:
     files.extend(sorted((root / directory).rglob('*.php')))
 main = (root / (slug + '.php')).read_text()

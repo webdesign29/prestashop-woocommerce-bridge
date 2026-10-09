@@ -15,11 +15,32 @@ jobs:
         run: php tests/manual-orders.php
       - name: Product and contact manual sync checks
         run: php tests/manual-records.php
+      - name: Native customer conflict guard checks
+        run: php tests/customer-record-guard.php
       - name: Bounded process and compatibility checks
         run: php tests/processes.php
       - name: Admin context regression checks
         run: php tests/admin-context.php
+      - name: Product editor authorization checks (PrestaShop 8 and 9)
+        run: |
+          php tests/product-links.php
+          php tests/product-links-admin.php 8.2.8
+          php tests/product-links-admin.php 9.1.5
+          node --check includes/product-links-admin.js
+          node --check includes/record-panel-admin.js
+          php tests/record-panel-admin.php 8.2.8
+          php tests/record-panel-admin.php 9.1.5
+          php tests/record-panel-identity.php
+          php tests/unmapped-variant-prices.php
+      - name: Product editor browser contract
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+          python3 tests/product-links-browser.py
+          python3 tests/record-panel-browser.py
       - name: Address entity regression checks
         run: php tests/address-entities.php
+      - name: Single-record workspace checks
+        run: php tests/record-panel.php
       - name: Build installation archive
         run: python3 scripts/package.py

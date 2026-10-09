@@ -2,6 +2,9 @@
 namespace WD29\Bridge;
 require_once __DIR__.'/ManualOrders.php';
 require_once __DIR__.'/ManualRecords.php';
+require_once __DIR__.'/ProductLinks.php';
+require_once __DIR__.'/RecordPanel.php';
+require_once __DIR__.'/CustomerRecordGuard.php';
 
 /** Durable transport and reconciliation. Native platform operations live in adapters. */
 final class Engine
@@ -33,10 +36,19 @@ final class Engine
             'order_lines' => 'order_key varchar(96) NOT NULL, line_key varchar(96) NOT NULL, native_id bigint unsigned NOT NULL, PRIMARY KEY(order_key,line_key), UNIQUE KEY native_line(native_id)',
             'contacts' => 'id bigint unsigned NOT NULL AUTO_INCREMENT, record_key varchar(96) NOT NULL, data longtext NOT NULL, PRIMARY KEY(id), UNIQUE KEY origin(record_key)',
             'map' => 'record_key varchar(96) NOT NULL, kind varchar(16) NOT NULL, local_id bigint unsigned NOT NULL, fingerprint varchar(64) NOT NULL DEFAULT \'\', local_hash varchar(64) NOT NULL DEFAULT \'\', quantity bigint NULL, stock_initialized tinyint NOT NULL DEFAULT 0, snapshot longtext NULL, PRIMARY KEY(record_key), UNIQUE KEY native_record(kind,local_id)',
-            'queue' => 'seq bigint unsigned NOT NULL AUTO_INCREMENT, event_id char(32) NOT NULL, direction varchar(8) NOT NULL, kind varchar(16) NOT NULL, record_key varchar(96) NOT NULL, payload longtext NOT NULL, state varchar(16) NOT NULL DEFAULT \'pending\', attempts int NOT NULL DEFAULT 0, next_try bigint NOT NULL DEFAULT 0, error varchar(255) NOT NULL DEFAULT \'\', created_at datetime NOT NULL, PRIMARY KEY(seq), UNIQUE KEY event_direction(event_id,direction), KEY pending_queue(direction,state,next_try)',
+            'queue' => 'seq bigint unsigned NOT NULL AUTO_INCREMENT, event_id char(32) NOT NULL, direction varchar(8) NOT NULL, kind varchar(16) NOT NULL, record_key varchar(96) NOT NULL, payload longtext NOT NULL, state varchar(16) NOT NULL DEFAULT \'pending\', attempts int NOT NULL DEFAULT 0, next_try bigint NOT NULL DEFAULT 0, error varchar(255) NOT NULL DEFAULT \'\', created_at datetime NOT NULL, PRIMARY KEY(seq), UNIQUE KEY event_direction(event_id,direction), KEY pending_queue(direction,state,next_try), KEY record_activity(record_key,state,seq), KEY record_latest(record_key,seq)',
         ] as $name => $fields) {
             $this->sql('CREATE TABLE IF NOT EXISTS {b}' . $name . ' (' . $fields . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
         }
+        // Existing stores gain the same per-record index without recreating their history.
+        foreach (['record_activity'=>'record_key,state,seq','record_latest'=>'record_key,seq'] as $index=>$columns) {
+            $indexSql='SELECT INDEX_NAME FROM information_schema.statistics WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND INDEX_NAME=? LIMIT 1';
+            if (!$this->sql($indexSql,[$this->table.'queue',$index])) {
+                try { $this->sql('ALTER TABLE {b}queue ADD INDEX '.$index.'('.$columns.')'); }
+                catch (\Throwable $error) { if (!$this->sql($indexSql,[$this->table.'queue',$index])) { throw $error; } }
+            }
+        }
+
     }
 
     public function config(): array { return $this->adapter->config(); }
@@ -227,6 +239,19 @@ final class Engine
         if ($op === 'health') {
             return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->mode(), 'worker'=>$this->adapter->workerStatus(), 'diagnostics'=>$this->diagnostics()];
         }
+        if ($op === 'product_link') {
+            if (!isset($message['key']) || !is_string($message['key'])) { throw new \InvalidArgumentException('Invalid product identity.'); }
+            return ProductLinks::inspect($this, $message['key']);
+        }
+        if ($op === 'record_panel_source' || $op === 'record_panel_compare') {
+            if (!is_string($message['kind'] ?? null)) { throw new \InvalidArgumentException('Invalid record kind.'); }
+            if ($op === 'record_panel_source') {
+                if (!is_string($message['key'] ?? null)) { throw new \InvalidArgumentException('Invalid record identity.'); }
+                return RecordPanel::source($this, $message['kind'], $message['key']);
+            }
+            if (!is_array($message['rows'] ?? null)) { throw new \InvalidArgumentException('Invalid comparison.'); }
+            return RecordPanel::target($this, $message['kind'], $message['rows']);
+        }
         if (strpos($op,'manual_record')===0) { return $this->manualRecordReceive($message); }
         if (strpos($op,'manual_order')===0) { return $this->manualOrderReceive($message); }
         if (!$this->enabled()) { throw new \RuntimeException('Bridge is disabled.'); }
@@ -259,10 +284,10 @@ final class Engine
         return count($ids);
     }
 
-    public function peer(array $payload): array
+    public function peer(array $payload, int $timeout = 25): array
     {
         $config = $this->config();
-        return Protocol::request($config['peer'] ?? '', $config['secret'] ?? '', ['source' => $this->adapter->site()] + $payload);
+        return Protocol::request($config['peer'] ?? '', $config['secret'] ?? '', ['source' => $this->adapter->site()] + $payload, $timeout);
     }
 
     public function tick(bool $wakePeer = true): void

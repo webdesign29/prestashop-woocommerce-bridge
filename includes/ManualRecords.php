@@ -38,6 +38,71 @@ trait ManualRecords
         if($kind==='product')return ['label'=>(string)$data['name'],'detail'=>(string)($data['sku']??'').' · '.count($data['variants']??[]).' variante(s) · '.(string)($data['prices']['regular']??'—').' '.(string)($data['currency']??''),'status'=>(string)($data['status']??'')];
         return ['label'=>trim(($data['first_name']??'').' '.($data['last_name']??'')),'detail'=>!empty($data['guest'])?'Contact invité':'Contact inscrit','status'=>'Répertoire du plugin'];
     }
+    /** Read one known product on either end of its mapping, without scans or exports. */
+    public function manualRecordInspect(string $kind,string $key): array
+    {
+        if($kind!=='product'||!preg_match('/^(woo|ps):product:[1-9][0-9]{0,9}$/D',$key))throw new \RuntimeException('Produit à inspecter invalide.');
+        $parts=explode(':',$key);$origin=$parts[0]===$this->adapter->site();$map=$this->mapping($key);
+        $id=$origin?(int)$parts[2]:($map?(int)$map['local_id']:0);
+        $out=['ok'=>true,'row'=>null,'mode'=>$this->config()['mode']??'disabled'];
+        if(!$id||$this->productDeleted($key))return $out;
+        if(!$this->adapter->productExists($id))return $out;
+        $previous=$this->manualPreview;$this->manualPreview=true;
+        try{$data=$this->adapter->product($id);}finally{$this->manualPreview=$previous;}
+        if(($data['key']??'')!==$key)throw new \RuntimeException('Identité du produit différente de la correspondance.');
+        $inventory=[];foreach(array_slice($data['inventory']??[],0,1000) as $stock){$inventory[]=['key'=>(string)$stock['key'],'quantity'=>$stock['quantity']??null];}
+        $out['row']=['key'=>$key,'hash'=>$this->recordHash($kind,$data),'fields'=>$this->recordFields($kind,$data),'stock'=>$this->recordStock($data),'summary'=>$this->recordSummary($kind,$data),'inventory'=>$inventory,'inventory_truncated'=>count($data['inventory']??[])>1000,'local_id'=>$id,'origin'=>$origin,'fingerprint'=>$map['fingerprint']??'','local_hash'=>$map['local_hash']??''];
+        return $out;
+    }
+    /** Read exactly one saved original without creating identities or contact rows. */
+    public function manualRecordSource(string $kind,string $key): array
+    {
+        $data=$this->recordSnapshot($kind,$key);
+        if(($data['key']??'')!==$key)throw new \RuntimeException('Identité source différente.');
+        $summary=$kind==='order'?['label'=>'Commande #'.(string)($data['number']??''),'detail'=>(string)($data['total']??'').' '.(string)($data['currency']??'').' · '.count($data['items']??[]).' article(s)','status'=>(string)($data['status']??'')]:$this->recordSummary($kind,$data);
+        if($kind==='order'&&method_exists($this->adapter,'manualOrderSummary')){
+            $display=$this->adapter->manualOrderSummary((int)substr($key,strrpos($key,':')+1));
+            if(is_array($display)&&is_string($display['status_label']??null))$summary['status']=$display['status_label'];
+        }
+        $row=['key'=>$key,'hash'=>$this->recordHash($kind,$data),'fields'=>$this->recordFields($kind,$data),'stock'=>$kind==='product'?$this->recordStock($data):null,'summary'=>$summary];
+        if($kind==='product')$row['variant_review']=$this->recordVariants($data);
+        return ['ok'=>true,'row'=>$row,'mode'=>$this->config()['mode']??'disabled'];
+    }
+    private function recordVariants(array $data): array
+    {
+        $rows=[];
+        foreach(array_slice($data['variants']??[],0,200) as $variant){
+            $attributes=[];foreach($variant['attributes']??[] as $name=>$value){if(is_scalar($value))$attributes[]=$name.': '.$value;}
+            $rows[]=['key'=>(string)$variant['key'],'hash'=>Protocol::fingerprint($variant),'label'=>substr(trim((string)($variant['sku']??'').' · '.implode(', ',$attributes)),0,300)];
+        }
+        return ['total'=>count($data['variants']??[]),'rows'=>$rows,'truncated'=>count($data['variants']??[])>200];
+    }
+    private function recordVariationChanges(array $source,?array $native,?array $map,string $state,string $key,array $fields=[]): array
+    {
+        $baseline=null;$basis='native';$catalogChanges=null;
+        if($map&&!empty($map['fingerprint'])){
+            $event=$this->sql("SELECT payload FROM {b}queue WHERE record_key=? AND direction='in' AND kind='product' AND state='applied' ORDER BY seq DESC LIMIT 1",[$key])[0]??null;
+            $payload=$event?json_decode($event['payload'],true):null;
+            if(is_array($payload)&&($payload['hash']??'')===$map['fingerprint']&&is_array($payload['data']??null)){$baseline=$this->recordVariants($payload['data']);$basis='last_sync';$catalogChanges=[];foreach($this->recordFields('product',$payload['data']) as $field=>$hash)if(isset($fields[$field])&&$fields[$field]!==$hash)$catalogChanges[]=$field;}
+        }
+        if($baseline===null)$baseline=$this->recordVariants($native??[]);
+        $previous=array_column($baseline['rows'],null,'key');$rows=[];$count=0;
+        foreach(array_slice($source['rows']??[],0,200) as $v){
+            if(!is_array($v)||!is_string($v['key']??null)||!is_string($v['hash']??null)||!is_string($v['label']??null))throw new \RuntimeException('Variantes invalides.');
+            $status=$state==='same'?'same':(!isset($previous[$v['key']])?'added':($previous[$v['key']]['hash']===$v['hash']?'same':'changed'));
+            $rows[]=['key'=>$v['key'],'label'=>substr($v['label'],0,300),'state'=>$status];if($status!=='same')$count++;unset($previous[$v['key']]);
+        }
+        if(empty($source['truncated']))foreach($previous as $v){$rows[]=['key'=>$v['key'],'label'=>$v['label'],'state'=>'removed'];$count++;}
+        // Also detect orphaned native variants from older syncs that acknowledged an incomplete removal.
+        if(empty($source['truncated'])){
+            $sourceKeys=array_column($source['rows']??[],'key');$listed=array_column($rows,'key');
+            foreach($this->recordVariants($native??[])['rows'] as $v)if(!in_array($v['key'],$sourceKeys,true)&&!in_array($v['key'],$listed,true)){
+                $rows[]=['key'=>$v['key'],'label'=>$v['label'],'state'=>'removed'];$count++;
+            }
+        }
+        $truncated=!empty($source['truncated'])||!empty($baseline['truncated'])||count($rows)>200;
+        return ['summary'=>(int)($source['total']??0).' variation(s) enregistrée(s) · '.$count.' différence(s)'.($truncated?' (aperçu limité)':''),'count'=>$count,'total'=>(int)($source['total']??0),'rows'=>array_slice($rows,0,200),'truncated'=>$truncated,'basis'=>$basis,'catalog_changes'=>$catalogChanges];
+    }
     public function manualRecordScan(string $kind,int $offset=0,int $limit=20): array
     {
         $this->manualKind($kind);if($limit<1||$limit>20)throw new \RuntimeException('Taille du lot invalide.');if($kind==='order')return $this->manualOrderScan($offset,$limit);
@@ -68,7 +133,21 @@ trait ManualRecords
             if($kind==='product'&&$this->productDeleted($key))$state='conflict';
             if($this->sql("SELECT seq FROM {b}queue WHERE record_key=? AND state IN ('failed','conflict') LIMIT 1",[$key]))$state='conflict';
             $changes=[];if($native)foreach($this->recordFields($kind,$native) as $field=>$value){if(isset($row['fields'][$field])&&$row['fields'][$field]!==$value)$changes[]=$field;}
-            $result[]=['key'=>$key,'state'=>$state,'changes'=>$changes,'destination'=>$map['fingerprint']??'','local_id'=>$map?(int)$map['local_id']:null,'destination_summary'=>$summary,'stock_difference'=>$kind==='product'&&$native&&isset($row['stock'])&&$row['stock']!==$this->recordStock($native)];
+            $account=$kind==='customer'?CustomerRecordGuard::inspect($this,$key):null;
+            if($account&&$account['state']==='conflict')$state='conflict';
+            $comparison=['key'=>$key,'state'=>$state,'changes'=>$changes,'destination'=>$map['fingerprint']??'','local_id'=>$map?(int)$map['local_id']:null,'destination_summary'=>$summary,'stock_difference'=>$kind==='product'&&$native&&isset($row['stock'])&&$row['stock']!==$this->recordStock($native)];
+            if($kind==='product'&&is_array($row['variant_review']??null)){
+                $comparison['variation_changes']=$this->recordVariationChanges($row['variant_review'],$native,$map,$state,$key,$row['fields']??[]);
+                if($state!=='conflict'&&is_array($comparison['variation_changes']['catalog_changes']))$comparison['changes']=$comparison['variation_changes']['catalog_changes'];
+                unset($comparison['variation_changes']['catalog_changes']);
+                foreach($comparison['variation_changes']['rows'] as $variation)if($variation['state']==='removed'){
+                    $comparison['state']='conflict';$comparison['blocker']='variation_removal';
+                    $comparison['review_reason']='Des variations sont absentes de la source. Vérifiez leur retrait dans l’administration cible avant de synchroniser.';break;
+                }
+            }
+            if($comparison['state']==='same')$comparison['changes']=[];
+            if($account)$comparison['native_account']=$account;
+            $result[]=$comparison;
         }
         return ['ok'=>true,'rows'=>$result,'mode'=>$this->config()['mode']??'disabled'];
     }
@@ -102,6 +181,13 @@ trait ManualRecords
         try{
             $comparison=$this->manualRecordCompare($kind,[['key'=>$key,'hash'=>$hash]])['rows'][0];
             if($comparison['state']==='conflict')throw new \RuntimeException('Modification locale ou conflit : consultez les rapports.');
+            if($kind==='customer'&&CustomerRecordGuard::inspect($this,$key,$data)['state']==='conflict')throw new \RuntimeException('Le compte client local a changé. Consultez les rapports.');
+            if($kind==='product'&&!empty($comparison['local_id'])){
+                $previous=$this->manualPreview;$this->manualPreview=true;
+                try{$current=$this->adapter->product((int)$comparison['local_id']);}finally{$this->manualPreview=$previous;}
+                $incomingKeys=array_column($data['variants']??[],'key');
+                foreach($current['variants']??[] as $variant)if(!in_array($variant['key'],$incomingKeys,true))throw new \RuntimeException('Retrait de variation à vérifier dans l’administration cible avant de synchroniser.');
+            }
             if($comparison['state']==='same')return ['ok'=>true,'state'=>'same','local_id'=>$comparison['local_id']];
             if(!hash_equals($comparison['destination'],$destination))throw new \RuntimeException('La destination a changé. Actualisez la comparaison.');
             $id=bin2hex(random_bytes(16));$this->enqueue('in',$kind,$key,['base'=>$destination,'hash'=>$hash,'data'=>$data],$id);$event=$this->sql("SELECT * FROM {b}queue WHERE event_id=? AND direction='in'",[$id])[0];$this->apply($event);$done=$this->sql("SELECT state,error FROM {b}queue WHERE event_id=? AND direction='in'",[$id])[0];
@@ -145,6 +231,7 @@ trait ManualRecords
     {
         $kind=(string)($m['kind']??'');
         switch($m['op']){
+            case 'manual_record_inspect':return $this->manualRecordInspect($kind,(string)($m['key']??''));
             case 'manual_records_scan':return $this->manualRecordScan($kind,(int)($m['offset']??0),(int)($m['limit']??20));
             case 'manual_records_compare':return $this->manualRecordCompare($kind,(array)($m['rows']??[]));
             case 'manual_record_export':return $this->manualRecordExport($kind,(string)($m['key']??''),(string)($m['hash']??''));

@@ -1,7 +1,7 @@
 <?php
 /** GPL-2.0-or-later. */
 if (!defined('_PS_VERSION_')) { exit; }
-if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.6.2'); }
+if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.6.4'); }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Licence.php';
 require_once __DIR__ . '/includes/LicenceAdmin.php';
@@ -18,6 +18,8 @@ require_once __DIR__ . '/includes/Gallery.php';
 require_once __DIR__ . '/includes/DiagnosticsAdmin.php';
 require_once __DIR__ . '/includes/FieldMirrorAdmin.php';
 require_once __DIR__ . '/includes/PrestaAdapter.php';
+require_once __DIR__ . '/includes/ProductLinksAdmin.php';
+require_once __DIR__ . '/includes/RecordPanelAdmin.php';
 
 class Wd29woobridge extends Module
 {
@@ -27,7 +29,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.6.2';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.6.4';
         $this->author = 'Webdesign29'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.1.99'];
         parent::__construct();
@@ -40,10 +42,16 @@ class Wd29woobridge extends Module
             $adapter = new \WD29\Bridge\PrestaAdapter();
             $this->bridgeEngine = new \WD29\Bridge\Engine($adapter); $adapter->engine = $this->bridgeEngine;
         }
-        if (Configuration::get('WD29_BRIDGE_SCHEMA') !== '6') { $this->bridgeEngine->install(); Configuration::updateValue('WD29_BRIDGE_SCHEMA','6'); }
+        if (Configuration::get('WD29_BRIDGE_SCHEMA') !== '7') { $this->bridgeEngine->install(); Configuration::updateValue('WD29_BRIDGE_SCHEMA','7'); }
         // Hooks added after 0.3: stores updated in place never re-run install().
         if (Configuration::get('WD29_BRIDGE_HOOKS') !== '1' && $this->id) {
             $this->registerHook('displayBackOfficeHeader'); Configuration::updateValue('WD29_BRIDGE_HOOKS', '1');
+        }
+        if (Configuration::get('WD29_BRIDGE_PRODUCT_LINKS') !== '1' && $this->id) {
+            if (\WD29\Bridge\ProductLinksAdmin::install($this)) { Configuration::updateValue('WD29_BRIDGE_PRODUCT_LINKS', '1'); }
+        }
+        if (Configuration::get('WD29_BRIDGE_RECORD_PANELS') !== '1' && $this->id) {
+            if (\WD29\Bridge\RecordPanelAdmin::install($this)) { Configuration::updateValue('WD29_BRIDGE_RECORD_PANELS', '1'); }
         }
         return $this->bridgeEngine;
     }
@@ -75,12 +83,17 @@ class Wd29woobridge extends Module
             if (!$this->registerHook($hook)) { return false; }
         }
         $this->registerHook('displayBackOfficeHeader'); Configuration::updateValue('WD29_BRIDGE_HOOKS', '1');
+        if (!\WD29\Bridge\ProductLinksAdmin::install($this)) { return false; }
+        Configuration::updateValue('WD29_BRIDGE_PRODUCT_LINKS', '1');
+        if (!\WD29\Bridge\RecordPanelAdmin::install($this)) { return false; }
+        Configuration::updateValue('WD29_BRIDGE_RECORD_PANELS', '1');
         return true;
     }
     /** Back-office banner while live mode is paused or the licence grace period runs. */
     public function hookDisplayBackOfficeHeader()
     {
         try {
+            \WD29\Bridge\RecordPanelAdmin::rememberAdminBase($this->context);
             if (Tools::getValue('configure') === $this->name) { return ''; }
             $engine = $this->bridge();
             if (($engine->config()['mode'] ?? 'disabled') === 'disabled') { return ''; }
@@ -90,6 +103,19 @@ class Wd29woobridge extends Module
             $html = '<div class="alert alert-' . ($s['live'] ? 'warning' : 'danger') . '" id="wd29-licence-alert" style="margin:16px 0"><strong>Inklura Sync : ' . $this->escape($s['label']) . '.</strong> ' . $this->escape($s['text']) . ' <a href="' . $this->escape($link) . '">Licence</a></div>';
             return '<script>document.addEventListener("DOMContentLoaded",function(){if(document.getElementById("wd29-licence-alert"))return;var t=document.querySelector("#main-div .content-div")||document.querySelector("#content");if(!t)return;var d=document.createElement("div");d.innerHTML=' . json_encode($html) . ';t.insertBefore(d.firstChild,t.firstChild);});</script>';
         } catch (Throwable $e) { return ''; }
+    }
+    public function hookDisplayAdminProductsExtra($params)
+    {
+        return \WD29\Bridge\ProductLinksAdmin::render($this, (int)($params['id_product'] ?? 0))
+            . \WD29\Bridge\RecordPanelAdmin::render($this, 'product', (int)($params['id_product'] ?? 0));
+    }
+    public function hookDisplayAdminOrderMainBottom($params)
+    {
+        return \WD29\Bridge\RecordPanelAdmin::render($this, 'order', (int)($params['id_order'] ?? 0));
+    }
+    public function hookDisplayAdminCustomers($params)
+    {
+        return \WD29\Bridge\RecordPanelAdmin::render($this, 'customer', (int)($params['id_customer'] ?? 0));
     }
     public function uninstall() { return parent::uninstall(); } // Keep mappings, replay protection and order history.
     private function captureLater(string $kind, int $id): void

@@ -2,7 +2,7 @@
 require __DIR__.'/manual-orders.php';
 class RecordAdapter extends ManualAdapter {
  public $products=[],$profiles=[];
- function __construct($site){parent::__construct($site);$this->db->exec("ALTER TABLE t_wd29_bridge_map ADD COLUMN quantity INTEGER;ALTER TABLE t_wd29_bridge_map ADD COLUMN stock_initialized INTEGER DEFAULT 0;CREATE TABLE t_wd29_bridge_deleted_products(record_key TEXT PRIMARY KEY);CREATE TABLE t_wd29_bridge_contacts(id INTEGER PRIMARY KEY AUTOINCREMENT,record_key TEXT UNIQUE,data TEXT);");}
+ function __construct($site){parent::__construct($site);$this->db->exec("ALTER TABLE t_wd29_bridge_map ADD COLUMN quantity INTEGER;ALTER TABLE t_wd29_bridge_map ADD COLUMN stock_initialized INTEGER DEFAULT 0;CREATE TABLE t_wd29_bridge_deleted_products(record_key TEXT PRIMARY KEY);CREATE TABLE t_wd29_bridge_contacts(id INTEGER PRIMARY KEY AUTOINCREMENT,record_key TEXT UNIQUE,data TEXT);CREATE TABLE t_wd29_bridge_account_links(record_key TEXT PRIMARY KEY,native_id INTEGER UNIQUE);");}
  function ids($kind,$offset,$limit){return $kind==='product'?array_slice(array_keys($this->products),$offset,$limit):parent::ids($kind,$offset,$limit);}
  function product($id){if(!isset($this->products[$id]))throw new RuntimeException('Missing product');return ['key'=>$this->products[$id]['key']??$this->engine->identity('product',$id)]+$this->products[$id];}
  function productExists($id){return isset($this->products[$id]);}
@@ -16,12 +16,18 @@ foreach(['woo','ps'] as $side){
  $a->products[1]=['name'=>'Produit breton','sku'=>'TEST','status'=>'publish','inventory'=>[],'prices'=>['regular'=>'10'],'variants'=>[]];
  $a->profiles[$side.':customer:5']=['key'=>$side.':customer:5','first_name'=>'Client','last_name'=>'Exemple','email'=>'private@example.invalid','phone'=>'','company'=>'','billing'=>[],'shipping'=>[],'guest'=>false,'deleted'=>false];
  foreach(['product','customer'] as $kind){
+  if($kind==='product'){
+   $inspect=$s->manualRecordInspect('product',$side.':product:1');check($inspect['row']['summary']['label']==='Produit breton','Single product inspection missing');check($inspect['row']['origin']===true,'Source origin lost');
+   check($t->manualRecordInspect('product',$side.':product:1')['row']===null,'Missing mapped copy inspection should be empty');
+   refuses(fn()=>$s->manualRecordInspect('customer',$side.':customer:5'),'Inspection leaked customer profile');refuses(fn()=>$s->manualRecordInspect('product','woo:product:1 OR 1'),'Invalid inspection key accepted');
+  }
   $scan=$s->manualRecordScan($kind);check(count($scan['rows'])===1,'Scan missing original');$row=$scan['rows'][0];check(!str_contains(json_encode($scan),'private@example.invalid'),'Comparison exposed email');
   check(!$s->sql('SELECT * FROM {b}map WHERE kind=?',[$kind]),'Read-only scan created map');check(!$s->sql('SELECT * FROM {b}contacts'),'Read-only scan created contact');
   $comp=$t->manualRecordCompare($kind,[$row])['rows'][0];check($comp['state']==='missing','Missing copy not identified');$export=$s->manualRecordExport($kind,$row['key'],$row['hash']);
   refuses(fn()=>$s->manualRecordExport($kind,$row['key'],str_repeat('0',64)),'Stale source accepted');
   WD29\Bridge\Licence::$allowed=false;refuses(fn()=>$t->manualRecordApply($kind,$export,''),'Unlicensed write accepted');WD29\Bridge\Licence::$allowed=true;
   $done=$t->manualRecordApply($kind,$export,'');check($done['state']==='applied','Manual record not applied');$before=$b->writes;check($t->manualRecordApply($kind,$export,'')['state']==='same'&&$b->writes===$before,'Duplicate record write');
+  if($kind==='product'){ $inspect=$t->manualRecordInspect('product',$row['key']);check($inspect['row']['origin']===false&&$inspect['row']['local_id']===$done['local_id'],'Exact mapped copy inspection failed');}
   check($s->manualRecordAck($kind,$row['key'],$row['hash'],$export['through'])['state']==='acknowledged','Source not acknowledged');check($s->mode()==='disabled'&&$t->mode()==='disabled','Automatic mode changed');
   if($kind==='product')$a->products[1]['name']='Nouveau nom';else $a->profiles[$row['key']]['first_name']='Nouveau';
   $changed=$s->manualRecordScan($kind)['rows'][0];check($t->manualRecordCompare($kind,[$changed])['rows'][0]['state']==='changed','Source delta missed');$new=$s->manualRecordExport($kind,$row['key'],$changed['hash']);refuses(fn()=>$t->manualRecordApply($kind,$new,''),'Stale destination accepted');

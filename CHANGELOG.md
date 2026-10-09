@@ -1,3 +1,17 @@
+## 0.6.4
+
+- Panneaux natifs dans les fiches produit, commande et client : état de synchronisation, comparaison à la demande, activité récente et actions individuelles confirmées, sans changer le mode automatique.
+- Liens vers la fiche publique du produit et vers l’administration distante de la fiche correspondante ; connexion et droits natifs exigés, aucun jeton distant partagé.
+- Aperçu des variations enregistrées (ajouts, modifications, retraits). Le produit et ses variations sont synchronisés ensemble ; les retraits à examiner bloquent l’action, les quantités existantes conservent leur suivi par événements.
+- Protections des modifications locales des comptes clients facultatifs, y compris adresses et nouveaux champs ; distinction explicite entre répertoire Sync et compte client natif.
+- Correction des prix de déclinaisons PrestaShop : aperçu des nouvelles déclinaisons sans correspondance préalable et invalidation du cache de prix avant le calcul de l’empreinte après synchronisation.
+- Lectures différées, sans polling ni scan de catalogue ; index d’activité par fiche ajoutés aux installations existantes. Mettre les deux connecteurs à jour.
+
+## 0.6.3
+
+- Add signed, read-only inspection of one mapped product and its stock for the opt-in Commerce Pro product workspace; no catalogue scans or customer information.
+- Preserve original/copy identities, conflict protections and stock movement queues.
+
 # Inklura Sync 0.6.2
 
 - Les pages d’administration ne chargent plus les rapports et instantanés natifs des autres pages. La vue d’ensemble ne parcourt plus les commandes et remboursements masqués.

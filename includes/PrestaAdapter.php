@@ -33,6 +33,63 @@ final class PrestaAdapter
     {
         return (bool)$this->sql('SELECT id_product FROM `'._DB_PREFIX_.'product` WHERE id_product=?',[$id]);
     }
+    /** Resolve an editor's native ID without creating mappings or matching by email. */
+    public function recordPanelIdentity(string $kind, int $id): string
+    {
+        if ($id < 1 || !in_array($kind, ['product', 'order', 'customer'], true) || $this->shop() < 1) { return ''; }
+        $table = $kind === 'product' ? 'product_shop' : ($kind === 'order' ? 'orders' : 'customer');
+        $field = 'id_'.$kind;
+        $rows = $this->sql('SELECT '.$field.' FROM `'._DB_PREFIX_.$table.'` WHERE '.$field.'=? AND id_shop=?'.($kind === 'customer' ? ' AND deleted=0' : ''), [$id, $this->shop()]);
+        if (!$rows) { return ''; }
+        if ($kind === 'customer') {
+            $links = $this->engine->sql('SELECT record_key FROM {b}account_links WHERE native_id=?', [$id]);
+            if (count($links) === 1) {
+                $key = (string)$links[0]['record_key'];
+                return preg_match('/^woo:(?:customer|guest):[1-9][0-9]{0,14}$/D', $key) ? $key : '';
+            }
+            $key = Protocol::key('ps', 'customer', $id);
+            return !$links && $this->manualContactOriginal($key) ? $key : '';
+        }
+        $maps = $this->engine->sql('SELECT record_key FROM {b}map WHERE kind=? AND local_id=?', [$kind, $id]);
+        if (count($maps) === 1) {
+            $key = (string)$maps[0]['record_key'];
+            if (!preg_match('/^(?:ps|woo):'.$kind.':[1-9][0-9]{0,14}$/D', $key)) { return ''; }
+            return strpos($key, 'ps:') !== 0 || $key === Protocol::key('ps', $kind, $id) ? $key : '';
+        }
+        if ($maps) { return ''; }
+        // An unlinked mirror order must never be recaptured as a new original.
+        if ($kind === 'order' && $this->sql('SELECT id_order FROM `'._DB_PREFIX_."orders` WHERE id_order=? AND module='wd29woobridge'", [$id])) { return ''; }
+        return Protocol::key('ps', $kind, $id);
+    }
+    public function recordPanelAdminUrl(string $kind, string $key): string
+    {
+        if (RecordPanel::nativeId($this->engine, $kind, $key) < 1) { return ''; }
+        $base = (string)\Configuration::get('WD29_BRIDGE_ADMIN_BASE');
+        $parts = parse_url($base); $site = parse_url($this->siteUrl());
+        if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https' || empty($parts['host'])
+            || strtolower($parts['host']) !== strtolower((string)($site['host'] ?? ''))
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])
+            || (isset($parts['port']) && $parts['port'] !== 443) || substr($parts['path'] ?? '', -10) !== '/index.php') { return ''; }
+        return $base.'?'.http_build_query(['controller' => 'AdminWd29RecordPanel', 'action' => 'open', 'kind' => $kind, 'key' => $key], '', '&', PHP_QUERY_RFC3986);
+    }
+    /** Native public URL in the paired shop's default language; no admin/preview links. */
+    public function productPublicUrl(int $id): string
+    {
+        $shop = $this->shop(); $lang = $this->lang();
+        if ($id < 1 || $shop < 1 || !\Validate::isLoadedObject(\Context::getContext()->shop)
+            || !\Context::getContext()->shop->active) { return ''; }
+        $rows = $this->sql('SELECT id_product FROM `'._DB_PREFIX_.'product_shop` WHERE id_product=? AND id_shop=? AND active=1', [$id, $shop]);
+        if (!$rows) { return ''; }
+        $product = new \Product($id, false, $lang, $shop);
+        if (!\Validate::isLoadedObject($product) || !$product->active) { return ''; }
+        if (\Group::isFeatureActive()) {
+            $guestGroup = (int)\Configuration::get('PS_UNIDENTIFIED_GROUP');
+            if (!$this->sql('SELECT cp.id_product FROM `'._DB_PREFIX_.'category_product` cp INNER JOIN `'._DB_PREFIX_.'category_group` cg ON cg.id_category=cp.id_category WHERE cp.id_product=? AND cg.id_group=? LIMIT 1', [$id, $guestGroup])) { return ''; }
+        }
+        $link = new \Link('https://', 'https://');
+        $url = (string)$link->getProductLink($product, null, null, null, $lang, $shop);
+        return strpos($url, 'https://') === 0 ? $url : '';
+    }
     public function archiveProduct(int $id): void
     {
         $product=new \Product($id,false,$this->lang(),$this->shop());
@@ -226,16 +283,17 @@ final class PrestaAdapter
         $featureGroups=[];
         foreach ($this->sql('SELECT fl.name,vl.value FROM `'._DB_PREFIX_.'feature_product` fp JOIN `'._DB_PREFIX_.'feature_lang` fl ON fl.id_feature=fp.id_feature JOIN `'._DB_PREFIX_.'feature_value_lang` vl ON vl.id_feature_value=fp.id_feature_value WHERE fp.id_product=? AND fl.id_lang=? AND vl.id_lang=? ORDER BY fl.name,vl.value',[$id,$this->lang(),$this->lang()]) as $feature) { $featureGroups[$feature['name']][]=$feature['value']; }
         foreach ($featureGroups as $name=>$options) { $data['attributes'][]=['name'=>$name,'options'=>$options,'variation'=>false]; }
-        $data['variants'] = array_values($variants);
         $anon = clone \Context::getContext(); $anon->customer = new \Customer(); $anon->cart = new \Cart();
         $anon->currency = new \Currency((int)\Configuration::get('PS_CURRENCY_DEFAULT'));
         $anon->country = new \Country((int)\Configuration::get('PS_COUNTRY_DEFAULT'));
-        foreach ($data['variants'] as &$variant) {
-            $aid=(int)$this->engine->mapping($variant['key'])['local_id']; $specific=null;
+        // Combination IDs are already known. Manual previews deliberately create no mappings.
+        foreach ($variants as $aid => &$variant) {
+            $specific=null;
             $price=\Product::getPriceStatic($id,false,$aid,6,null,false,true,1,false,0,0,null,$specific,false,false,$anon,false);
             if ((float)$price < (float)$variant['prices']['regular'] - 0.000001) { $variant['prices']['sale']=number_format($price,6,'.',''); }
         }
         unset($variant);
+        $data['variants'] = array_values($variants);
         if (!$variants) {
             $specific=null;
             $price=\Product::getPriceStatic($id,false,false,6,null,false,true,1,false,0,0,null,$specific,false,false,$anon,false);
@@ -466,6 +524,9 @@ final class PrestaAdapter
         }
         Gallery::apply($p,$desiredImageIds,$meta,!empty($this->config()['sync_gallery_removals']));
         $this->engine->sql('UPDATE {b}map SET snapshot=? WHERE record_key=?', [Protocol::encode($meta), $data['key']]);
+        // The same request may have compared the old combination prices before applying.
+        // Fingerprinting below must observe the newly saved regular/specific prices.
+        \Product::flushPriceCache();
         return (int) $p->id;
     }
     public function stockDelta(array $map, int $delta): void

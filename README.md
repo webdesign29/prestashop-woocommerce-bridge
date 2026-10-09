@@ -143,3 +143,25 @@ L’administration propose Vue d’ensemble, Comparer & synchroniser, Activité,
 Comparer & synchroniser interroge les deux boutiques, dans le sens choisi, par lots de 20 originaux. Les actions individuelles et les lots complets fonctionnent aussi à l’arrêt/audit sans modifier ces modes. Les lots complets traitent un enregistrement par requête, d’abord les produits puis les contacts et commandes, avec arrêt après la fiche courante et journal copiable. Gardez l’onglet ouvert ; après une interruption, relancer reconnaît les copies identiques. Les conflits et erreurs restent à examiner.
 
 Les variantes, images et champs autorisés suivent leurs produits. Les stocks existants restent gérés par les événements de stock et ne sont pas forcés par ces actions ; leurs écarts sont signalés séparément. Les contacts restent dans le répertoire du plugin sauf activation préalable des comptes natifs. Une comparaison ne crée aucune correspondance ni aucun compte.
+
+
+## Liens entre les fiches produit (0.6.4)
+
+Dans WooCommerce, ouvrez une fiche produit : le panneau latéral **Inklura Sync** propose **Voir sur PrestaShop**. Dans PrestaShop 8 ou 9, ouvrez l’onglet **Modules** de la fiche produit puis le panneau Inklura Sync : **Voir sur WooCommerce** ouvre la fiche publique correspondante dans un nouvel onglet.
+
+Mettez les deux connecteurs à jour en 0.6.4. La correspondance repose sur l’identité enregistrée par Sync, pour les originaux comme les copies importées ; elle n’est jamais déduite du SKU ou de l’identifiant local. La vérification est différée jusqu’à l’affichage du panneau, sans polling et sans modifier les données ou le mode de synchronisation. Elle fonctionne aussi lorsque la synchronisation automatique est arrêtée.
+
+Les produits non synchronisés, supprimés ou non publiés et les partenaires indisponibles ont un état explicite. **Réessayer** relance uniquement la lecture. Les liens publics ne donnent aucun accès à l’administration distante. Les autorisations natives de modification du produit, les protections CSRF et les signatures entre boutiques restent exigées.
+
+
+## Actions depuis les fiches natives (0.6.4)
+
+Le panneau **Inklura Sync** apparaît aussi sur les commandes (y compris HPOS dans WooCommerce) et les fiches clients natives. **Comparer** lit uniquement les données enregistrées et indique les différences, la source, la cible, les modes et l’activité récente. Enregistrez d’abord vos modifications dans l’éditeur natif.
+
+Une fiche originale propose l’envoi vers son partenaire ; une copie importée propose sa mise à jour depuis l’original. L’action demande une confirmation simple puis vérifie à nouveau les deux instantanés. Une modification intervenue entre-temps, un conflit local, une licence insuffisante ou un retrait de variation à vérifier bloque l’écriture. L’application réussie avec confirmation distante en attente reste signalée comme partielle.
+
+Les ajouts et modifications de variations suivent leur produit parent. Les retraits ne suppriment pas silencieusement les anciennes identités de stock : vérifiez-les dans l’administration cible avant de reprendre. L’activité affichée sur une fiche produit concerne le parent ; les événements de stock des variations restent dans le journal.
+
+Pour les clients, le statut compare le répertoire privé Sync ; la création/mise à jour des comptes natifs reste facultative. Les copies natives liées font l’objet d’une vérification supplémentaire des noms, coordonnées, adresses et métadonnées écrasables. Une fiche non liée n’est jamais rapprochée par adresse email. Les contacts invités de commandes miroir ne sont pas traités comme de nouveaux clients originaux.
+
+**Ouvrir l’administration distante** ouvre la fiche correspondante après connexion sur le partenaire et vérification de vos droits. Il ne transfère ni session, ni mot de passe, ni jeton d’administration. Dans PrestaShop, ouvrez une fois l’administration après la mise à jour pour enregistrer son chemin natif.
