@@ -1,4 +1,8 @@
-## 0.7.1 (unreleased)
+## 0.7.2 (unreleased)
+
+- Align the bundled companion version with the Woo Marketplace security scan correction; runtime behavior is unchanged.
+
+## 0.7.1 (Marketplace resubmission)
 
 - Validate admin selectors without silently repairing malformed values; preserve opaque form data for schema validation.
 - Release cURL handles without the PHP 8.5 deprecated curl_close call.
