@@ -108,7 +108,7 @@ final class Protocol
             CURLOPT_WRITEFUNCTION => function ($curl, $chunk) use (&$bytes) {
                 if (strlen($bytes) + strlen($chunk) > 10485760) { return 0; } $bytes .= $chunk; return strlen($chunk);
             }]);
-        $ok = curl_exec($curl); $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE); curl_close($curl);
+        $ok = curl_exec($curl); $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE); unset($curl);
         if ($ok === false || $status !== 200) { throw new \RuntimeException('Image download failed.'); }
         $info = @getimagesizefromstring($bytes);
         if (!$info || !in_array($info['mime'], ['image/jpeg','image/png','image/webp'], true) || $info[0] * $info[1] > 40000000) {
@@ -150,7 +150,7 @@ final class Protocol
         ]);
         $ok = curl_exec($curl);
         $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
+        unset($curl);
         if ($ok === false || $status < 200 || $status >= 300) {
             throw new \RuntimeException('Peer request failed (HTTP ' . $status . ').');
         }

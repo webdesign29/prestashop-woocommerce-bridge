@@ -1,5 +1,6 @@
 <?php
 namespace WD29\Bridge;
+require_once __DIR__ . '/AdminInput.php';
 require_once __DIR__ . '/AdminContext.php';
 require_once __DIR__ . '/Distribution.php';
 
@@ -27,13 +28,15 @@ final class AdminDesign
     }
     public static function viewUrl(string $view): string
     {
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only navigation URL; all output of the URL is escaped by e().
         $query=$_GET;unset($query['inklura_demo_section']);$query['wd_view']=$view;
         foreach(array_keys($query) as $key)if(strpos($key,'manual_')===0||$key==='bridge_action')unset($query[$key]);
         return '?'.http_build_query($query,'','&',PHP_QUERY_RFC3986);
     }
     public static function currentView(): string
     {
-        $view=$_POST['wd_view']??$_GET['wd_view']??'overview';$action=(string)($_POST['bridge_action']??'');
+        // phpcs:ignore WordPress.Security.NonceVerification -- Presentation selector only; mutation handlers verify nonces separately.
+        $view=AdminInput::text($_POST,'wd_view')??AdminInput::text($_GET,'wd_view','overview');$action=(AdminInput::text($_POST,'bridge_action','')??'');
         if(strpos($action,'manual_record')===0)$view='sync';elseif(strpos($action,'manual_order')===0)$view='orders';
         return in_array($view,['overview','sync','orders','activity','reports','settings','licence'],true)?$view:'overview';
     }
@@ -97,7 +100,8 @@ final class AdminDesign
             $index++;$page=in_array($name,['settings','Champs personnalisés','Statuts des commandes'],true)?'settings':($name==='Comparer et synchroniser'?'sync':($name==='Commandes à synchroniser'?'orders':(in_array($name,['tools','Diagnostics','Conflits de commandes','Journal des événements'],true)?'activity':'reports')));
             if($page!==$view&&!($view==='overview'&&$name==='Diagnostics'))continue;
             $title=$titles[$name]??[$name,'Configuration avancée du connecteur'];$id=$name==='Comparer et synchroniser'?'wd-compare':($name==='Commandes à synchroniser'?'wd-orders-delta':($name==='settings'?'wd-settings':($name==='tools'?'wd-tools':'wd-report-'.$index)));
-            $open=in_array($name,['settings','Diagnostics','Commandes à synchroniser','Comparer et synchroniser','tools','Journal des événements'],true)||($name==='Modifier les champs personnalisés'&&in_array((string)($_POST['bridge_action']??''),['load_mirror_fields','save_mirror_fields'],true))||($name==='Champs personnalisés'&&($_POST['bridge_action']??'')==='save_field_rows');
+            // phpcs:ignore WordPress.Security.NonceVerification -- Presentation selector only; mutation handlers verify nonces separately.
+            $open=in_array($name,['settings','Diagnostics','Commandes à synchroniser','Comparer et synchroniser','tools','Journal des événements'],true)||($name==='Modifier les champs personnalisés'&&in_array((AdminInput::text($_POST,'bridge_action','')??''),['load_mirror_fields','save_mirror_fields'],true))||($name==='Champs personnalisés'&&AdminInput::text($_POST,'bridge_action','')==='save_field_rows');
             if($view==='reports'&&strpos($out,'id="wd-reports"')===false)$out.='<div id="wd-reports" class="wd-section-title"><h2>Rapports</h2><p>Originaux et copies importées sur '.self::e($localName).'.</p></div>';
             $out.='<details id="'.$id.'" class="wd-card '.$panelClass.' wd-section wd-section-'.($name==='settings'?'settings':($name==='tools'?'tools':'report')).'"'.($open?' open':'').'><summary><span><strong>'.self::e($title[0]).'</strong><small>'.self::e($title[1]).'</small></span><span class="wd-chevron" aria-hidden="true">⌄</span></summary><div class="wd-section-body">'.$content.'</div></details>';
         }

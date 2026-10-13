@@ -73,7 +73,7 @@ final class ModuleUpdater
         ]);
         $ok = curl_exec($curl);
         $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
+        unset($curl);
         fclose($out);
         if ($ok === false || $status !== 200) {
             throw new \RuntimeException($status === 403 ? 'Téléchargement refusé : licence inactive pour cette boutique.' : 'Téléchargement impossible (HTTP ' . $status . ').');

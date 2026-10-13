@@ -166,7 +166,7 @@ Pour les clients, le statut compare le répertoire privé Sync ; la création/mi
 
 **Ouvrir l’administration distante** ouvre la fiche correspondante après connexion sur le partenaire et vérification de vos droits. Il ne transfère ni session, ni mot de passe, ni jeton d’administration. Dans PrestaShop, ouvrez une fois l’administration après la mise à jour pour enregistrer son chemin natif.
 
-## Distribution channels (0.7.0, unreleased)
+## Distribution channels (0.7.1, unreleased)
 
 `includes/Distribution.php` fixes the channel at build time. The source and default archive remain `direct`; the Marketplace packager substitutes `woo-marketplace` in an independent copy. Stored configuration, a request parameter, a license key, or a transient never selects the distribution.
 
@@ -185,7 +185,7 @@ python3 scripts/package.py --channel woo-marketplace
 Then build the WooCommerce archive in its repository with the actual matching companion:
 
 ```sh
-python3 scripts/package.py --channel woo-marketplace --companion ../prestashop-woocommerce-bridge/dist/woo-marketplace/wd29woobridge-0.7.0.zip
+python3 scripts/package.py --channel woo-marketplace --companion ../prestashop-woocommerce-bridge/dist/woo-marketplace/wd29woobridge-0.7.1.zip
 ```
 
 The Woo archive is `dist/woo-marketplace/inklura-sync.zip`, rooted at `inklura-sync/`, with `inklura-sync.php` as its main file. The PrestaShop archive retains its required `wd29woobridge/` folder. Packaging rejects a direct-sale companion or a version mismatch. Both packagers are deterministic and leave source files unchanged. `python3 scripts/package.py` still creates the direct-sale archive.

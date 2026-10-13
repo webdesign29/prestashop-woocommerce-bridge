@@ -16,7 +16,7 @@ try {
         $engine=wd29_bridge();
     } else {
         if (!is_file($root.'/config/config.inc.php')) { throw new RuntimeException('PrestaShop root is invalid.'); }
-        $_SERVER['REQUEST_URI']=$_SERVER['REQUEST_URI']??'/';
+        $_SERVER['REQUEST_URI']='/'; // CLI has no browser request URI.
         require $root.'/config/config.inc.php';
         if (Shop::isFeatureActive()) { throw new RuntimeException('Single-shop mode is required.'); }
         $context=Context::getContext();

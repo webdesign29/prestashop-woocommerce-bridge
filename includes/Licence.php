@@ -255,7 +255,7 @@ final class Licence
         ]);
         $ok = curl_exec($curl);
         $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
+        unset($curl);
         if ($ok === false) { throw new LicenceRetryLater('Serveur de licence injoignable.', 0); }
         return ['status' => $status, 'body' => $body, 'retry_after' => $retryAfter];
     }
