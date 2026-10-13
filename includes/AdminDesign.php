@@ -1,6 +1,7 @@
 <?php
 namespace WD29\Bridge;
 require_once __DIR__ . '/AdminContext.php';
+require_once __DIR__ . '/Distribution.php';
 
 /** Shared presentation layer: retains existing forms, names, nonces and handlers. */
 final class AdminDesign
@@ -80,7 +81,7 @@ final class AdminDesign
         if(($engine->config()['mode']??'')==='live'&&$engine->mode()!=='live'){$mode='Mode audit · licence';}
         $out='<style>'.file_get_contents(__DIR__.'/admin-design.css').'</style><div id="wd29-admin" data-wd-view="'.self::e($view).'" class="wd-platform-'.self::e($platform).($platform==='ps'?'':' wrap').'"><header class="wd-hero"><h1>Inklura Sync</h1><span class="wd-badge">'.self::e($mode).'</span></header>'.AdminContext::stores($engine,$local).$top;
         $out.='<nav class="wd-nav'.($platform==='ps'?'':' nav-tab-wrapper').'" aria-label="Pages du connecteur">'.($platform==='ps'?'<ul class="nav nav-tabs">':'');
-        foreach(['overview'=>'Vue d’ensemble','sync'=>'Comparer & synchroniser','activity'=>'Activité','reports'=>'Rapports','settings'=>'Réglages','licence'=>'Licence & mises à jour'] as $page=>$label){
+        foreach(['overview'=>'Vue d’ensemble','sync'=>'Comparer & synchroniser','activity'=>'Activité','reports'=>'Rapports','settings'=>'Réglages','licence'=>Distribution::isMarketplace()?'Updates & support':'Licence & mises à jour'] as $page=>$label){
             $active=($view==='orders'?'sync':$view)===$page;
             if($platform==='ps')$out.='<li class="nav-item'.($active?' active':'').'">';
             $out.='<a class="'.($platform==='ps'?'nav-link'.($active?' active':''):'nav-tab'.($active?' nav-tab-active':'')).'" href="'.self::e(self::viewUrl($page)).'"'.($active?' aria-current="page"':'').'>'.self::e($label).'</a>';
@@ -91,7 +92,7 @@ final class AdminDesign
         foreach([['État du suivi',$d['ok']?'À jour':'À vérifier',$d['ok']?'Aucune anomalie détectée':count($d['issues']).' point(s) à examiner'],['En attente',$pending,'Événements à traiter'],['À résoudre',$blocked,'Échecs et conflits'],['Partenaire configuré',$remoteName,'Les rapports ci-dessous concernent '.$localName]] as $stat){$out.='<article class="wd-card wd-stat '.$panelClass.'"><span>'.$stat[0].'</span><strong>'.self::e($stat[1]).'</strong><small>'.self::e($stat[2]).'</small></article>';}
         $out.='</div><p><a class="'.$primaryButton.'" href="'.self::e(self::viewUrl('sync')).'">Comparer les boutiques</a> <a class="'.$secondaryButton.'" href="'.self::e(self::viewUrl('activity')).'">Consulter les échanges</a></p>';}$index=0;
         if(isset($sections['Commandes à synchroniser'])){$sections=['Commandes à synchroniser'=>$sections['Commandes à synchroniser']]+$sections;}
-        if($view==='licence'&&$licence!==''){$out.='<details id="wd-licence" class="wd-card '.$panelClass.' wd-section wd-section-licence"'.' open'.'><summary><span><strong>Licence · '.self::e($ls['label']).'</strong><small>'.self::e($ls['hint']!==''?'Clé '.$ls['hint'].($ls['expires']!==''?' · échéance '.$ls['expires']:''):'Clé, état et mises à jour').'</small></span><span class="wd-chevron" aria-hidden="true">⌄</span></summary><div class="wd-section-body">'.$licence.'</div></details>';}
+        if($view==='licence'&&$licence!==''){$out.='<details id="wd-licence" class="wd-card '.$panelClass.' wd-section wd-section-licence"'.' open'.'><summary><span><strong>'.(Distribution::isMarketplace()?'':'Licence · ').self::e($ls['label']).'</strong><small>'.self::e(Distribution::isMarketplace()?'Woo subscription and companion module':($ls['hint']!==''?'Clé '.$ls['hint'].($ls['expires']!==''?' · échéance '.$ls['expires']:''):'Clé, état et mises à jour')).'</small></span><span class="wd-chevron" aria-hidden="true">⌄</span></summary><div class="wd-section-body">'.$licence.'</div></details>';}
         foreach($sections as $name=>$content){
             $index++;$page=in_array($name,['settings','Champs personnalisés','Statuts des commandes'],true)?'settings':($name==='Comparer et synchroniser'?'sync':($name==='Commandes à synchroniser'?'orders':(in_array($name,['tools','Diagnostics','Conflits de commandes','Journal des événements'],true)?'activity':'reports')));
             if($page!==$view&&!($view==='overview'&&$name==='Diagnostics'))continue;

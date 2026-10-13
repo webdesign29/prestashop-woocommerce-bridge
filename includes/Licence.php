@@ -1,6 +1,7 @@
 <?php
 /** Licence client for plugins.inklura.fr (protocol v1). Shared by both plugins. GPL-2.0-or-later. */
 namespace WD29\Bridge;
+require_once __DIR__ . '/Distribution.php';
 
 /**
  * The licence decides one thing only: whether a store configured in live mode may apply
@@ -63,6 +64,9 @@ final class Licence
     /** Save a key entered by the administrator and activate this store now. */
     public function setKey(string $raw): array
     {
+        if (Distribution::isMarketplace()) {
+            throw new \LogicException('The Woo Marketplace edition does not use an Inklura license key.');
+        }
         $key = self::normalizeKey($raw);
         if ($key === null) { throw new \InvalidArgumentException('Clé de licence invalide : format attendu WD29-XXXX-XXXX-XXXX-XXXX.'); }
         $state = $this->state();
@@ -76,6 +80,9 @@ final class Licence
     /** Free this store's pair on the server, then forget the key. */
     public function removeKey(): array
     {
+        if (Distribution::isMarketplace()) {
+            return ['message' => 'Manage your subscription on WooCommerce.com. Existing Inklura keys are left unchanged.'] + $this->state();
+        }
         $state = $this->state();
         $message = 'Clé retirée de cette boutique.';
         if (($state['key'] ?? '') !== '') {
@@ -89,6 +96,7 @@ final class Licence
     /** Worker entry point: at most one network call per day, only when a key is set. */
     public function maybeCheck(?int $now = null): void
     {
+        if (Distribution::isMarketplace()) { return; }
         $now = $now ?? time();
         $state = $this->state();
         if (empty($state['status']) && empty($state['unlicensed_since'])) { $state = $this->save(['unlicensed_since' => $now] + $state); }
@@ -100,6 +108,7 @@ final class Licence
     /** Contact the server now. Failures are recorded and never change the licence status. */
     public function check(string $op = 'check', ?int $now = null): array
     {
+        if (Distribution::isMarketplace()) { return $this->state(); }
         $now = $now ?? time();
         $state = $this->state();
         $key = (string) ($state['key'] ?? '');
@@ -147,6 +156,9 @@ final class Licence
     /** @return array{0:bool,1:string} [live allowed, reason] */
     public function gate(?int $now = null): array
     {
+        // Woo sells updates and support. Installed functionality does not expire,
+        // and a stale direct-sale key must never gate a Marketplace installation.
+        if (Distribution::isMarketplace()) { return [true, 'woo-marketplace']; }
         $now = $now ?? time();
         $s = $this->state();
         $status = ($s['key'] ?? '') === '' ? 'missing' : (string) ($s['status'] ?? 'unverified');
@@ -171,6 +183,9 @@ final class Licence
     /** @return array verified payload */
     public function call(string $op, string $key, ?int $now = null, ?string $lastIssued = null): array
     {
+        if (Distribution::isMarketplace()) {
+            throw new \LogicException('Inklura license-service requests are disabled in the Woo Marketplace edition.');
+        }
         if (!in_array($op, ['activate', 'check', 'deactivate'], true)) { throw new \InvalidArgumentException('Unknown licence operation.'); }
         $fields = [
             'key' => $key, 'product' => self::PRODUCT, 'side' => $this->side(),
@@ -248,6 +263,7 @@ final class Licence
     /** Headers for authenticated downloads and update manifests. */
     public function downloadHeaders(): array
     {
+        if (Distribution::isMarketplace()) { return []; }
         $key = (string) ($this->state()['key'] ?? '');
         return $key === '' ? [] : ['X-Licence-Key' => $key, 'X-Site-Url' => $this->adapter->siteUrl()];
     }
@@ -255,6 +271,7 @@ final class Licence
     /** Newer release published for this side, from the last verified answer. */
     public function updateAvailable(): ?string
     {
+        if (Distribution::isMarketplace()) { return null; }
         $latest = (string) ($this->state()['latest_version'][$this->side()] ?? '');
         return $latest !== '' && version_compare($latest, $this->adapter->pluginVersion(), '>') ? $latest : null;
     }
@@ -262,6 +279,13 @@ final class Licence
     /** French summary for the admin panel. */
     public function summary(?int $now = null): array
     {
+        if (Distribution::isMarketplace()) {
+            // This describes the installed edition, not an asserted Woo subscription status.
+            return ['label' => 'Woo Marketplace edition', 'tone' => 'ok', 'live' => true,
+                'reason' => 'woo-marketplace',
+                'text' => 'No separate Inklura license key is required. Your Woo subscription covers updates and support; installed synchronization continues after expiry.',
+                'hint' => '', 'plan' => null, 'pairs' => '', 'expires' => '', 'checked' => '', 'error' => '', 'update' => null];
+        }
         $now = $now ?? time();
         $s = $this->state();
         [$live, $reason] = $this->gate($now);

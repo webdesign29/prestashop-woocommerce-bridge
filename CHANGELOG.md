@@ -1,3 +1,9 @@
+## 0.7.0 (unreleased)
+
+- Add an independently packaged Woo Marketplace edition and matching PrestaShop companion. The installed edition requires no additional Inklura key, never makes Inklura license requests, and keeps synchronization working when the Woo subscription expires. Woo manages updates and support.
+- Preserve direct-sale licensing, keys, settings, mappings and history. An administrator must deactivate the other WooCommerce edition before switching; uninstalling is not required.
+- Bundle the matching PrestaShop module and expose its download to authorized WordPress administrators with a nonce. Companion updates come from the current Woo connector package, avoiding a second update/billing channel.
+
 ## 0.6.8.1
 
 - Liens directs : l’accès est vérifié avec le droit natif « Configurer » du module (le même que le bouton du gestionnaire de modules), y compris sur PrestaShop 8 où ils affichaient encore l’avertissement de jeton.

@@ -1,5 +1,6 @@
 <?php
 namespace WD29\Bridge;
+require_once __DIR__ . '/Distribution.php';
 require_once __DIR__.'/ManualOrders.php';
 require_once __DIR__.'/ManualRecords.php';
 require_once __DIR__.'/ProductLinks.php';
@@ -831,6 +832,7 @@ final class Engine
 
     private function licenceIssues(string $configured, int $now): array
     {
+        if (Distribution::isMarketplace()) { return []; }
         $licence=$this->licence(); [$live,$reason]=$licence->gate($now); $state=$licence->state(); $issues=[];
         if ($configured==='live' && !$live) {
             $issues[]=['code'=>'licence_paused','severity'=>'error','action'=>'Le mode live est suspendu par la licence ('.$reason.') : les événements reçus sont conservés, rien n\'est appliqué. Saisissez ou renouvelez la clé ; le mode live reprend au passage suivant du worker.'];
