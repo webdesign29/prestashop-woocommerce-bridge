@@ -10,6 +10,9 @@ final class LicenceAdmin
     public static function handle(Engine $engine, string $action, string $key): ?string
     {
         $licence = $engine->licence();
+        if (Distribution::isMarketplace() && in_array($action, ['licence_save', 'licence_check', 'licence_remove'], true)) {
+            return $licence->summary()['text'];
+        }
         if ($action === 'licence_save') { $licence->setKey($key); return $licence->summary()['text'] ?: 'Clé enregistrée.'; }
         if ($action === 'licence_check') { $licence->check('check'); $s = $licence->summary(); return $s['error'] !== '' ? $s['error'] : ($s['text'] ?: 'Licence vérifiée.'); }
         if ($action === 'licence_remove') { return (string) ($licence->removeKey()['message'] ?? 'Clé retirée.'); }
@@ -20,6 +23,14 @@ final class LicenceAdmin
     public static function render(Engine $engine, string $hidden, string $update = ''): string
     {
         $s = $engine->licence()->summary();
+        if (Distribution::isMarketplace()) {
+            // Preserve the section key used by the shared admin layout.
+            return '<h2>Licence</h2><div class="wd-licence"><p><strong>' . self::e($s['label']) . '</strong></p>'
+                . '<p>' . self::e($s['text']) . '</p>'
+                . '<p>Manage purchase, renewals and support in your <a href="https://woocommerce.com/my-account/my-subscriptions/" target="_blank" rel="noopener noreferrer">WooCommerce.com account</a>.</p>'
+                . ($engine->adapter->site() === 'ps' ? '<p>Update this companion module using the archive included with your WooCommerce connector. No separate PrestaShop subscription is required.</p>' : '')
+                . $update . '</div>';
+        }
         $configured = $engine->config()['mode'] ?? 'disabled';
         $state = ['ok' => 'wd-state-good', 'warn' => 'wd-state-warn', 'bad' => 'wd-state-error'][$s['tone']];
         $html = '<h2>Licence</h2><div class="wd-licence"><p><span class="wd-state ' . $state . '">' . self::e($s['label']) . '</span> ' . self::e($s['text']) . '</p>';

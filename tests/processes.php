@@ -29,3 +29,6 @@ foreach([false,true] as $legacy){
  check(!in_array('woo:product:4',$h->seen,true),'Conflict was applied');
 }
 echo "PASS: single-record scan budget, 20-row comparison compatibility, bounded cursors, filtered originals and old-peer fallback\n";
+
+// Included in the existing CI process checks; no workflow permissions required.
+require __DIR__.'/concurrent-products.php';

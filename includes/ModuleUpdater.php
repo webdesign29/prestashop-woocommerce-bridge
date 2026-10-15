@@ -1,6 +1,7 @@
 <?php
 /** In-place update of the PrestaShop module from plugins.inklura.fr. GPL-2.0-or-later. */
 namespace WD29\Bridge;
+require_once __DIR__ . '/Distribution.php';
 
 /**
  * Run only on an administrator's click. The archive is downloaded with the licence key,
@@ -16,6 +17,9 @@ final class ModuleUpdater
     /** @return string new version */
     public static function run(Engine $engine, string $moduleDir, string $installed): string
     {
+        if (Distribution::isMarketplace()) {
+            throw new \RuntimeException('Update this companion from the archive included with your Woo Marketplace connector.');
+        }
         if (!class_exists('ZipArchive')) { throw new \RuntimeException('Extension PHP zip absente : mettez à jour depuis le Gestionnaire de modules.'); }
         $headers = $engine->licence()->downloadHeaders();
         if (!$headers) { throw new \RuntimeException('Enregistrez d\'abord votre clé de licence.'); }
@@ -69,7 +73,7 @@ final class ModuleUpdater
         ]);
         $ok = curl_exec($curl);
         $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
+        unset($curl);
         fclose($out);
         if ($ok === false || $status !== 200) {
             throw new \RuntimeException($status === 403 ? 'Téléchargement refusé : licence inactive pour cette boutique.' : 'Téléchargement impossible (HTTP ' . $status . ').');

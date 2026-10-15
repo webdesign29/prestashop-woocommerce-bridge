@@ -1,5 +1,6 @@
 <?php
 namespace WD29\Bridge;
+require_once __DIR__ . '/Distribution.php';
 require_once __DIR__.'/ManualOrders.php';
 require_once __DIR__.'/ManualRecords.php';
 require_once __DIR__.'/ProductLinks.php';
@@ -455,6 +456,13 @@ final class Engine
         $attempts = (int) $event['attempts'] + 1;
         // Error text contains no payload, request headers, secrets or customer data.
         $message = substr(preg_replace('/[\r\n]+/', ' ', $error->getMessage()), 0, 255);
+        // A configuration decision cannot improve after eight rapid retries. Keep it visible and
+        // retry hourly as a fallback; saving the relevant settings removes this delay immediately.
+        if (isset(self::SETTING_ERRORS[$message])) {
+            $this->sql("UPDATE {b}queue SET attempts=?,next_try=?,state='pending',error=? WHERE seq=?",
+                [max(1, (int) $event['attempts']), time() + 3600, $message, $event['seq']]);
+            return;
+        }
         $this->sql('UPDATE {b}queue SET attempts=?,next_try=?,state=?,error=? WHERE seq=?',
             [$attempts, time() + min(3600, 30 * (2 ** min(7, $attempts))), $attempts >= 8 ? 'failed' : 'pending', $message, $event['seq']]);
     }
@@ -550,7 +558,13 @@ final class Engine
     }
 
     /** Errors caused by a missing setting, not by a transient failure: they wait for that setting. */
-    const SETTING_ERRORS = ['Confirm the tax rate for source display prices first.' => 'display_tax_rate', 'Tax rate has no unique PrestaShop tax-rule mapping.' => 'tax_rules'];
+    const SETTING_ERRORS = [
+        'Confirm the tax rate for source display prices first.' => 'display_tax_rate',
+        'Tax rate has no unique PrestaShop tax-rule mapping.' => 'tax_rules',
+        'Destination taxes are disabled; confirm a tax mapping before importing taxed prices.' => 'woo_taxes_disabled',
+        'No matching WooCommerce tax class.' => 'woo_tax_class',
+        'Display-only source price needs a confirmed tax mapping.' => 'woo_source_tax',
+    ];
 
     /**
      * Decisions or settings blocking synchronization, each with its direct fix. One grouped query on the
@@ -576,6 +590,16 @@ final class Engine
         if (isset($setting['tax_rules'])) {
             $actions[] = ['code' => 'tax_mapping_required', 'severity' => 'error', 'count' => $setting['tax_rules'], 'decision' => '', 'view' => 'settings',
                 'title' => 'Groupe de taxes à associer', 'text' => $setting['tax_rules'] . ' échange(s) utilisent un taux sans groupe de règles de taxes unique : renseignez la correspondance taux → groupe dans les réglages.'];
+        }
+        foreach ([
+            'woo_taxes_disabled' => ['Taxes WooCommerce désactivées', 'Activez les taxes dans WooCommerce → Réglages → Général, puis configurez les taux dans l’onglet TVA. Les prix reçus sont conservés ; aucune TVA n’est devinée.'],
+            'woo_tax_class' => ['Taux de TVA WooCommerce manquant', 'Ajoutez une classe de taxe WooCommerce dont le taux de base correspond au taux reçu. Vérifiez le pays de base et les règles de TVA.'],
+            'woo_source_tax' => ['Information fiscale source manquante', 'Les prix reçus ne précisent pas leur TVA alors que WooCommerce utilise les taxes. Configurez la fiscalité de la boutique source avant de renvoyer le produit.'],
+        ] as $code => $description) {
+            if (isset($setting[$code])) {
+                $actions[] = ['code' => $code, 'severity' => 'error', 'count' => $setting[$code], 'decision' => '', 'view' => 'settings',
+                    'title' => $description[0], 'text' => $setting[$code] . ' échange(s) attendent une configuration fiscale. ' . $description[1]];
+            }
         }
         if ($catalogConflicts > 0) {
             $policy = $config['conflict_policy'] ?? 'review';
@@ -611,11 +635,13 @@ final class Engine
     }
 
     /** Requeues events that only waited for a setting, without consuming their retries. */
-    public function requeueSettingErrors(): int
+    public function requeueSettingErrors(?array $errors = null): int
     {
-        $marks = implode(',', array_fill(0, count(self::SETTING_ERRORS), '?'));
-        $rows = $this->sql("SELECT COUNT(*) total FROM {b}queue WHERE state IN ('pending','failed') AND (state='failed' OR attempts>0) AND error IN ($marks)", array_keys(self::SETTING_ERRORS));
-        $this->sql("UPDATE {b}queue SET state='pending',attempts=0,next_try=0 WHERE state IN ('pending','failed') AND (state='failed' OR attempts>0) AND error IN ($marks)", array_keys(self::SETTING_ERRORS));
+        $errors = $errors === null ? array_keys(self::SETTING_ERRORS) : array_values(array_intersect($errors, array_keys(self::SETTING_ERRORS)));
+        if (!$errors) { return 0; }
+        $marks = implode(',', array_fill(0, count($errors), '?'));
+        $rows = $this->sql("SELECT COUNT(*) total FROM {b}queue WHERE state IN ('pending','failed') AND (state='failed' OR attempts>0) AND error IN ($marks)", $errors);
+        $this->sql("UPDATE {b}queue SET state='pending',attempts=0,next_try=0 WHERE state IN ('pending','failed') AND (state='failed' OR attempts>0) AND error IN ($marks)", $errors);
         return (int) ($rows[0]['total'] ?? 0);
     }
 
@@ -821,6 +847,11 @@ final class Engine
             $issues[]=['code'=>$code,'severity'=>$group['state']==='pending'?'warning':'error','direction'=>$group['direction'],'count'=>$group['total'],'action'=>$action];
         }
         unset($group);
+        foreach ($this->actionsNeeded($now) as $action) {
+            if (in_array($action['code'], ['tax_rate_required', 'tax_mapping_required', 'woo_taxes_disabled', 'woo_tax_class', 'woo_source_tax'], true)) {
+                $issues[] = ['code' => $action['code'], 'severity' => 'error', 'count' => $action['count'], 'action' => $action['text']];
+            }
+        }
         $active=$this->sql('SELECT issue_key,code,first_seen,last_seen,occurrences FROM {b}issues ORDER BY first_seen LIMIT 100');
         foreach ($active as $issue) {
             $issues[]=['code'=>$issue['code'],'severity'=>'error','record'=>$issue['issue_key'],'age_seconds'=>max(0,$now-(int)$issue['first_seen']),'occurrences'=>(int)$issue['occurrences'],
@@ -831,6 +862,7 @@ final class Engine
 
     private function licenceIssues(string $configured, int $now): array
     {
+        if (Distribution::isMarketplace()) { return []; }
         $licence=$this->licence(); [$live,$reason]=$licence->gate($now); $state=$licence->state(); $issues=[];
         if ($configured==='live' && !$live) {
             $issues[]=['code'=>'licence_paused','severity'=>'error','action'=>'Le mode live est suspendu par la licence ('.$reason.') : les événements reçus sont conservés, rien n\'est appliqué. Saisissez ou renouvelez la clé ; le mode live reprend au passage suivant du worker.'];

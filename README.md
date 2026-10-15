@@ -165,3 +165,31 @@ Les ajouts et modifications de variations suivent leur produit parent. Les retra
 Pour les clients, le statut compare le répertoire privé Sync ; la création/mise à jour des comptes natifs reste facultative. Les copies natives liées font l’objet d’une vérification supplémentaire des noms, coordonnées, adresses et métadonnées écrasables. Une fiche non liée n’est jamais rapprochée par adresse email. Les contacts invités de commandes miroir ne sont pas traités comme de nouveaux clients originaux.
 
 **Ouvrir l’administration distante** ouvre la fiche correspondante après connexion sur le partenaire et vérification de vos droits. Il ne transfère ni session, ni mot de passe, ni jeton d’administration. Dans PrestaShop, ouvrez une fois l’administration après la mise à jour pour enregistrer son chemin natif.
+
+## Distribution channels (0.7.2, unreleased)
+
+`includes/Distribution.php` fixes the channel at build time. The source and default archive remain `direct`; the Marketplace packager substitutes `woo-marketplace` in an independent copy. Stored configuration, a request parameter, a license key, or a transient never selects the distribution.
+
+The direct-sale edition keeps the existing signed-license gate and update server. The Woo Marketplace edition sells annual updates and support through Woo, includes both connectors, and never needs a second Inklura subscription or key. Existing synchronization continues after the Woo subscription expires. The UI identifies the installed edition without claiming that a Woo subscription has been verified.
+
+Before switching an existing pair, record its current configuration and put both stores in audit mode. Deactivate the other WooCommerce plugin, install/activate the new edition, and upload the companion from that same release through PrestaShop Module Manager. Do not uninstall either connector: settings, keys, mappings, pending events and history remain in their existing database records. Verify connection, tax and conflict settings in audit mode before explicitly returning to live mode.
+
+A Woo connector update includes the current companion archive. Download it from Updates & support and update the PrestaShop module manually. The Marketplace companion does not fetch direct-sale updates or send a key to Inklura.
+
+Build the companion first in the PrestaShop repository:
+
+```sh
+python3 scripts/package.py --channel woo-marketplace
+```
+
+Then build the WooCommerce archive in its repository with the actual matching companion:
+
+```sh
+python3 scripts/package.py --channel woo-marketplace --companion ../prestashop-woocommerce-bridge/dist/woo-marketplace/wd29woobridge-0.7.2.zip
+```
+
+The Woo archive is `dist/woo-marketplace/inklura-sync.zip`, rooted at `inklura-sync/`, with `inklura-sync.php` as its main file. The PrestaShop archive retains its required `wd29woobridge/` folder. Packaging rejects a direct-sale companion or a version mismatch. Both packagers are deterministic and leave source files unchanged. `python3 scripts/package.py` still creates the direct-sale archive.
+
+After extracting each Marketplace archive, run `php tests/marketplace-distribution.php /absolute/path/to/extracted/plugin`. In the Woo repository also run `php tests/marketplace-admin.php /absolute/path/to/inklura-sync` and `php tests/marketplace-bootstrap.php /absolute/path/to/inklura-sync/inklura-sync.php`. Run the existing direct-sale license, synchronization and admin regression checks too.
+
+The Woo build passed the native integration suite on WordPress 7.1.3 / WooCommerce 11.2.1 / PHP 8.3 using both legacy order storage and HPOS with compatibility synchronization disabled. HPOS compatibility is declared. The new Marketplace distribution requires WordPress 7.0+ and WooCommerce 11.2.1+; earlier combinations are not yet claimed. It does not customize the cart or checkout UI, so it does not declare a separate Cart/Checkout Blocks extension. Marketplace submission still requires English-default localization, managed QIT checks and Woo business/technical/UX approval. Existing French screens are explicitly disclosed.
