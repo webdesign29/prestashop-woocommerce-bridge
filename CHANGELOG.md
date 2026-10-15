@@ -1,3 +1,9 @@
+## 0.7.4
+
+- WooCommerce : la reprise des échanges fiscaux conserve le résultat natif de la base de données. Une suppression de taux de TVA ne renvoie plus une fausse erreur HTTP 500 quand la file de reprise ne modifie aucune ligne. Les erreurs du connecteur ne font pas échouer les opérations fiscales natives.
+- Compagnon PrestaShop aligné sur 0.7.4 ; son comportement reste inchangé.
+- Régression REST native : création, lecture, mise à jour et suppression de taux synthétiques, avec file vide ou en attente, modes désactivé, audit et live.
+
 ## 0.7.3
 
 - Les imports de produits bloqués par les taxes WooCommerce désactivées, une classe de TVA absente ou des prix source sans information fiscale affichent une action précise dans le tableau de bord et la supervision. Les liens ouvrent les vrais réglages WooCommerce concernés.
