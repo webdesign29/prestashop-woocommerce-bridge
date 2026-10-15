@@ -56,3 +56,22 @@ check($p->receive(['source'=>'ps','op'=>'conflict_policy','policy'=>'ps'])['poli
 check($p->sql("SELECT state FROM {b}queue")[0]['state']==='pending','Partner conflicts not retried');
 refuses(fn()=>$p->receive(['source'=>'ps','op'=>'conflict_policy','policy'=>'other']),'Invalid partner policy accepted');
 echo "PASS: action detection, suggestions, banner and notice links, one-click decisions, requeue on settings change, partner policy alignment\n";
+
+$a=new ActionAdapter('woo');$e=new WD29\Bridge\Engine($a);$a->engine=$e;
+$disabled='Destination taxes are disabled; confirm a tax mapping before importing taxed prices.';
+$missing='No matching WooCommerce tax class.';
+event($e,'failed','product',$disabled);event($e,'pending','product',$missing,2);event($e,'failed','stock','Unrelated stock failure');
+check(codes($e)===['woo_taxes_disabled','woo_tax_class','events_failed'],'Native VAT failures are not actionable');
+$html=WD29\Bridge\ActionsAdmin::render($e,'woo','');
+check(strpos($html,'tab=general#woocommerce_calc_taxes')!==false&&strpos($html,'tab=tax')!==false,'Native tax settings links missing');
+$notice=WD29\Bridge\ActionsAdmin::notice($e,'woo',fn($v)=>'?v='.$v);
+check(strpos($notice,'tab=general#woocommerce_calc_taxes')!==false,'Host notice points to connector settings instead of native VAT');
+check($e->requeueSettingErrors([$disabled,$missing])===2,'Native VAT changes did not requeue both tax failures');
+check($e->sql("SELECT state FROM {b}queue WHERE kind='stock'")[0]['state']==='failed','Native VAT save retried unrelated stock');
+check($e->requeueSettingErrors(['not a setting'])===0,'Unknown error used for setting retry');
+$fail=new ReflectionMethod(WD29\Bridge\Engine::class,'fail');$fail->setAccessible(true);
+$row=$e->sql("SELECT * FROM {b}queue WHERE error=?",[$disabled])[0];
+for($i=0;$i<10;$i++){$fail->invoke($e,$row,new RuntimeException($disabled));$row=$e->sql('SELECT * FROM {b}queue WHERE seq=?',[$row['seq']])[0];}
+check($row['state']==='pending'&&(int)$row['attempts']===1&&(int)$row['next_try']>=time()+3590,'Configuration failure consumed transient retries');
+check(in_array('woo_taxes_disabled',codes($e),true),'Waiting configuration disappeared from banner');
+echo "PASS: native tax diagnostics, direct links, selective recovery and durable configuration wait\n";

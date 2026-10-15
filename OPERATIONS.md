@@ -50,3 +50,14 @@ Use **Relancer les mises à jour de commandes équivalentes** (Retry equivalent 
 Permanent deletion of a mapped original emits an archive marker from its last captured catalog. The mirror is unpublished without changing stock or removing media; stale catalog updates cannot resurrect it. Missing snapshots require review and are diagnosed. A deleted source is never automatically recreated. Use a new source product identity for a deliberate replacement.
 
 Optional gallery removal is reversible through **Rattacher les images détachées** (Restore detached gallery images before 0.4) with a mapped product/variation key. Files and manual images remain. See GALLERY.md.
+
+
+## Produits absents et fiscalité WooCommerce (0.7.3)
+
+Si PrestaShop transmet un prix HT avec TVA et que WooCommerce n'utilise pas les taxes, l'import attend une configuration fiscale explicite. Le produit source est conservé ; il n'est ni fusionné avec un autre produit ni importé avec un prix deviné. Le bandeau Inklura ouvre les réglages WooCommerce Général ou TVA concernés. Configurez les taux, le pays de base et le mode de saisie HT/TTC selon la boutique. En production, ne changez pas la base des prix existants sans vérifier son effet.
+
+La sauvegarde des options ou d'un taux de TVA remet uniquement les erreurs fiscales en file, y compris celles ayant échoué avec une ancienne version. Le worker applique ensuite les événements, dans leur ordre par fiche. Les autres échecs et les conflits restent à examiner. Une erreur fiscale persistante attend une heure entre deux essais et n'épuise pas les huit reprises des erreurs transitoires.
+
+Deux nouveaux produits indépendants possèdent des identités différentes (`woo:product:N` et `ps:product:N`), même si leurs identifiants numériques sont identiques et leurs références vides. La priorité de catalogue concerne les modifications concurrentes d'une même fiche déjà liée. Elle ne fusionne pas les nouvelles fiches.
+
+Régressions : `php tests/processes.php` inclut les échanges simultanés dans les deux sens et leur rejeu. `php tests/actions-needed.php` vérifie les liens et les reprises ciblées. Le test WooCommerce natif `tests/kerawen-native.php` exige une installation jetable `wd29woo` / `woo.example.test` et vérifie la réception signée, le prix HT/TTC, les deux identités et les stocks ; ne pas le lancer sur une boutique cliente.

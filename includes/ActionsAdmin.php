@@ -18,11 +18,19 @@ final class ActionsAdmin
         foreach ($actions as $action) {
             $html .= '<div class="wd-action" data-action-code="' . self::e($action['code']) . '"><p><strong>' . self::e($action['title']) . '.</strong> ' . self::e($action['text']) . '</p>';
             $form = self::form($action, $platform);
-            $link = '<a href="' . self::e(AdminDesign::viewUrl($action['view'])) . '">' . ($action['view'] === 'settings' ? 'Ouvrir les réglages' : 'Voir l’activité') . '</a>';
+            $link = '<a href="' . self::e(self::actionUrl($action, $platform, AdminDesign::viewUrl($action['view']))) . '">' . ($action['view'] === 'settings' ? 'Ouvrir les réglages' : 'Voir l’activité') . '</a>';
             $html .= $form !== '' ? '<form method="post">' . $token . $form . ' ' . $link . '</form>' : '<p>' . $link . '</p>';
             $html .= '</div>';
         }
         return $html . '</div>';
+    }
+
+    /** Native tax settings resolve these errors; connector settings do not enable WooCommerce VAT. */
+    private static function actionUrl(array $action, string $platform, string $fallback): string
+    {
+        if ($platform === 'woo' && $action['code'] === 'woo_taxes_disabled') { return 'admin.php?page=wc-settings&tab=general#woocommerce_calc_taxes'; }
+        if ($platform === 'woo' && $action['code'] === 'woo_tax_class') { return 'admin.php?page=wc-settings&tab=tax'; }
+        return $fallback;
     }
 
     private static function form(array $action, string $platform): string
@@ -66,7 +74,7 @@ final class ActionsAdmin
         if (!$actions) { return ''; }
         $first = $actions[0]; $error = false; foreach ($actions as $action) { $error = $error || $action['severity'] === 'error'; }
         $more = count($actions) > 1 ? ' (+' . (count($actions) - 1) . ' autre' . (count($actions) > 2 ? 's' : '') . ')' : '';
-        $text = '<strong>Inklura Sync : ' . self::e($first['title']) . '.</strong> ' . self::e($first['text']) . $more . ' <a href="' . self::e($url($first['view']) . '#wd-actions') . '">Traiter maintenant</a>';
+        $text = '<strong>Inklura Sync : ' . self::e($first['title']) . '.</strong> ' . self::e($first['text']) . $more . ' <a href="' . self::e(self::actionUrl($first, $platform, $url($first['view']) . '#wd-actions')) . '">Traiter maintenant</a>';
         return $platform === 'ps'
             ? '<div class="alert alert-' . ($error ? 'danger' : 'warning') . '" id="wd29-actions-alert" style="margin:16px 0">' . $text . '</div>'
             : '<div class="notice notice-' . ($error ? 'error' : 'warning') . '"><p>' . $text . '</p></div>';

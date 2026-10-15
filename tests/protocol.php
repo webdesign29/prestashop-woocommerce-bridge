@@ -22,3 +22,7 @@ rejects(function () { Protocol::publicEndpoint('http://example.com'); }, 'Plain 
 rejects(function () { Protocol::publicEndpoint('https://user:password@example.com'); }, 'Credentials accepted in URL');
 rejects(function () { Protocol::publicEndpoint('https://example.com:8080'); }, 'Nonstandard port accepted');
 echo "PASS: protocol signatures, expiry, tampering, identities, quantities, URL constraints\n";
+
+foreach (['3.000000'=>3, '-2.000000'=>-2, '0.000000'=>0, ' 9.000 '=>9] as $quantity=>$expected) { expect(Protocol::quantity($quantity)===$expected,'Native whole stock rejected'); }
+foreach (['1.2', '-2.0001', '3e0', 'NaN', '1,000', '9999999999999999999999.000'] as $quantity) { rejects(function () use ($quantity) { Protocol::quantity($quantity); }, 'Invalid stock accepted: '.$quantity); }
+echo "PASS: native decimal whole stock; fractional, overflow and ambiguous counts rejected\n";
