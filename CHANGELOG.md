@@ -1,3 +1,10 @@
+## 0.7.3
+
+- Les imports de produits bloqués par les taxes WooCommerce désactivées, une classe de TVA absente ou des prix source sans information fiscale affichent une action précise dans le tableau de bord et la supervision. Les liens ouvrent les vrais réglages WooCommerce concernés.
+- Les erreurs de configuration fiscale attendent la correction sans épuiser huit tentatives. La sauvegarde des options ou des taux de TVA WooCommerce remet uniquement les échanges fiscaux en attente ; les conflits et les autres échecs sont conservés. Une reprise horaire reste disponible si un changement échappe aux hooks.
+- Les stocks entiers écrits par WooCommerce sous forme décimale (par exemple « 3.000000 ») sont acceptés. Les fractions et les valeurs ambiguës restent refusées.
+- Tests de création simultanée : deux produits indépendants gardent leurs identités sur les deux boutiques, même avec le même identifiant numérique et sans référence. La priorité de catalogue ne fusionne pas ces produits. Réception signée, reprise fiscale, prix HT/TTC et rejeu validés dans WooCommerce natif.
+
 ## 0.7.2 (unreleased)
 
 - Align the bundled companion version with the Woo Marketplace security scan correction; runtime behavior is unchanged.

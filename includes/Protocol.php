@@ -72,6 +72,8 @@ final class Protocol
     public static function quantity($value): ?int
     {
         if ($value === null || $value === '') { return null; }
+        // Native WooCommerce stock SQL writes whole counts as decimal strings (e.g. 3.000000).
+        if (is_string($value) && preg_match('/^(-?[0-9]{1,15})\.0+$/D', trim($value), $whole)) { $value = $whole[1]; }
         if (filter_var($value, FILTER_VALIDATE_INT) === false) {
             throw new \InvalidArgumentException('Fractional or invalid inventory requires an explicit unit mapping.');
         }
