@@ -26,7 +26,7 @@ trait ManualRecords
     private function recordFields(string $kind,array $data): array
     {
         if($kind==='order')return $this->manualOrderFields($data);
-        $groups=$kind==='product'?['identité'=>['name','sku','type','status','archived'],'prix'=>['prices','currency'],'description'=>['description','short_description'],'variantes'=>['attributes','variants'],'images'=>['images'],'classement'=>['categories','tags','brands'],'métadonnées'=>['custom_fields','identifiers','dimensions_cm','suppliers','seo','purchase_price_net','supplier']]:['identité'=>['first_name','last_name','company','guest','deleted'],'coordonnées'=>['email','phone','billing','shipping','addresses'],'métadonnées'=>['custom_fields']];$out=[];
+        $groups=$kind==='product'?['identité'=>['name','sku','type','status','archived'],'prix'=>['prices','currency'],'description'=>['description','short_description'],'variantes'=>['attributes','variants'],'images'=>['images'],'classement'=>['categories','tags','brands'],'métadonnées'=>['custom_fields','identifiers','dimensions_cm','suppliers','seo','purchase_price_net','supplier']]:['identité'=>['first_name','last_name','company','guest','deleted','active'],'coordonnées'=>['email','phone','billing','shipping','addresses'],'métadonnées'=>['custom_fields']];$out=[];
         foreach($groups as $label=>$keys){$values=[];foreach($keys as $k)$values[$k]=$data[$k]??null;$out[$label]=Protocol::fingerprint($values);}return $out;
     }
     private function recordStock(array $data): string

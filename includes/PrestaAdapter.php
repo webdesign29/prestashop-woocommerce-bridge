@@ -146,7 +146,7 @@ final class PrestaAdapter
     public function ids(string $kind, int $offset, int $limit): array
     {
         if ($kind==='customer') {
-            $rows=$this->sql('SELECT c.id_customer FROM `'._DB_PREFIX_."customer` c WHERE c.deleted=0 AND NOT EXISTS (SELECT 1 FROM `"._DB_PREFIX_."wd29_bridge_account_links` l WHERE l.native_id=c.id_customer) AND NOT EXISTS (SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge') ORDER BY c.id_customer LIMIT ".(int)$offset.','.(int)$limit);
+            $rows=$this->sql('SELECT c.id_customer FROM `'._DB_PREFIX_."customer` c WHERE c.deleted=0 AND NOT EXISTS (SELECT 1 FROM `"._DB_PREFIX_."wd29_bridge_account_links` l WHERE l.native_id=c.id_customer) AND (c.is_guest=0 OR NOT EXISTS (SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge')) ORDER BY c.id_customer LIMIT ".(int)$offset.','.(int)$limit);
             return array_map(function($row){return $this->engine->contactId(Protocol::key('ps','customer',(int)$row['id_customer']));},$rows);
         }
         $table = $kind === 'order' ? 'orders' : 'product';
@@ -155,12 +155,12 @@ final class PrestaAdapter
     }
     public function manualContactKeys(int $offset,int $limit): array
     {
-        return array_column($this->sql('SELECT CONCAT(\'ps:customer:\',c.id_customer) record_key FROM `'._DB_PREFIX_."customer` c WHERE c.deleted=0 AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."wd29_bridge_account_links` l WHERE l.native_id=c.id_customer) AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge') ORDER BY c.id_customer LIMIT ".(int)$offset.','.(int)$limit),'record_key');
+        return array_column($this->sql('SELECT CONCAT(\'ps:customer:\',c.id_customer) record_key FROM `'._DB_PREFIX_."customer` c WHERE c.deleted=0 AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."wd29_bridge_account_links` l WHERE l.native_id=c.id_customer) AND (c.is_guest=0 OR NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge')) ORDER BY c.id_customer LIMIT ".(int)$offset.','.(int)$limit),'record_key');
     }
     public function manualContactOriginal(string $key): bool
     {
         if(!preg_match('/^ps:customer:([1-9][0-9]*)$/D',$key,$m))return false;
-        return (bool)$this->sql('SELECT c.id_customer FROM `'._DB_PREFIX_."customer` c WHERE c.id_customer=? AND c.deleted=0 AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."wd29_bridge_account_links` l WHERE l.native_id=c.id_customer) AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge')",[(int)$m[1]]);
+        return (bool)$this->sql('SELECT c.id_customer FROM `'._DB_PREFIX_."customer` c WHERE c.id_customer=? AND c.deleted=0 AND NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."wd29_bridge_account_links` l WHERE l.native_id=c.id_customer) AND (c.is_guest=0 OR NOT EXISTS(SELECT 1 FROM `"._DB_PREFIX_."orders` o WHERE o.id_customer=c.id_customer AND o.module='wd29woobridge'))",[(int)$m[1]]);
     }
     private function stock(int $pid, int $aid, string $key): array
     {
@@ -364,7 +364,7 @@ final class PrestaAdapter
         foreach ($inventories as $inventory) {
             if ($inventory['key'] !== $key) { continue; }
             $qty = Protocol::quantity($inventory['quantity']);
-            if ($qty !== null) { \StockAvailable::setQuantity($pid, $aid, $qty, $this->shop(), false); if ($aid === 0) { \StockAvailable::setProductOutOfStock($pid, !empty($inventory['backorders']) ? 1 : 0, $this->shop()); } }
+            if ($qty !== null) { $this->stockSet(['kind'=>$aid?'variant':'product','local_id'=>$aid?:$pid],$qty); if ($aid === 0) { \StockAvailable::setProductOutOfStock($pid, !empty($inventory['backorders']) ? 1 : 0, $this->shop()); } }
             elseif ($aid === 0) { \StockAvailable::setProductOutOfStock($pid, $inventory['status'] === 'instock' ? 1 : 0, $this->shop()); }
             $this->engine->sql('UPDATE {b}map SET quantity=?,stock_initialized=1 WHERE record_key=?', [$qty, $key]);
             return;
@@ -476,9 +476,26 @@ final class PrestaAdapter
         foreach ($priceRows as $row) {
             $targetPrices = $this->prices($row['prices']);
             $specificId = (int) ($meta['specific_prices'][$row['key']] ?? 0);
-            if ($targetPrices['sale'] === null && !$specificId) { continue; }
             $specific = $specificId ? new \SpecificPrice($specificId) : new \SpecificPrice();
             $variantMap = $row['key'] === $data['key'] ? null : $this->engine->mapping($row['key']);
+            $scope = ['id_product'=>(int)$p->id,'id_product_attribute'=>$variantMap?(int)$variantMap['local_id']:0,
+                'id_shop'=>$this->shop(),'id_shop_group'=>0,'id_currency'=>0,'id_country'=>0,'id_group'=>0,
+                'id_customer'=>0,'id_cart'=>0,'from_quantity'=>1,'id_specific_price_rule'=>0,
+                'from'=>'0000-00-00 00:00:00','to'=>'0000-00-00 00:00:00'];
+            if (\Validate::isLoadedObject($specific)) {
+                foreach ($scope as $field=>$value) {
+                    if ((string)$specific->$field!==(string)$value) { throw new \RuntimeException('Mapped sale price scope changed; review the native price rule.'); }
+                }
+            } else {
+                // A native edit or a lost snapshot can leave this exact broad sale in place.
+                // Reuse its unique scope instead of inserting a duplicate; other promotions
+                // (customers, quantities, dates, shops or catalogue rules) stay untouched.
+                $where=[]; foreach ($scope as $field=>$value) { $where[]='`'.$field.'`=?'; }
+                $existing=$this->sql('SELECT id_specific_price FROM `'._DB_PREFIX_.'specific_price` WHERE '.implode(' AND ',$where).' LIMIT 2',array_values($scope));
+                if (count($existing)>1) { throw new \RuntimeException('Ambiguous native sale price scope.'); }
+                $specific=$existing?new \SpecificPrice((int)$existing[0]['id_specific_price']):new \SpecificPrice();
+            }
+            if ($targetPrices['sale'] === null && !\Validate::isLoadedObject($specific)) { continue; }
             $specific->id_product = (int) $p->id; $specific->id_product_attribute = $variantMap ? (int) $variantMap['local_id'] : 0;
             $specific->id_shop = $this->shop(); $specific->id_shop_group = 0; $specific->id_currency = 0;
             $specific->id_country = 0; $specific->id_group = 0; $specific->id_customer = 0; $specific->id_cart = 0;
@@ -541,16 +558,40 @@ final class PrestaAdapter
         $aid = $map['kind'] === 'variant' ? (int) $map['local_id'] : 0;
         $pid = $aid ? (int) (new \Combination($aid))->id_product : (int) $map['local_id'];
         if (!$pid) { throw new \RuntimeException('Stock product no longer exists.'); }
+        $this->withStockActor(function () use ($pid,$aid,$delta) {
+            // Core's movement writer silently skips legacy front-controller requests
+            // without a Symfony container, and Doctrine uses another DB connection.
+            // Keep the quantity and native ObjectModel ledger in our transaction.
+            if (\StockAvailable::updateQuantity($pid,$aid,$delta,$this->shop(),false)===false) { throw new \RuntimeException('Native stock update failed.'); }
+            $this->stockMovement($pid,$aid,$delta);
+        });
+    }
+    private function stockMovement(int $pid,int $aid,int $delta): void
+    {
+        if ($delta===0) { return; }
+        $stock=(int)\StockAvailable::getStockAvailableIdByProductId($pid,$aid,$this->shop());
+        $reason=(int)\Configuration::get($delta>0?'PS_STOCK_MVT_INC_EMPLOYEE_EDITION':'PS_STOCK_MVT_DEC_EMPLOYEE_EDITION');
+        $nativeReason=$reason?new \StockMvtReason($reason):null;
+        if (!$stock || !$nativeReason || !\Validate::isLoadedObject($nativeReason) || (int)$nativeReason->sign!==($delta>0?1:-1)) { throw new \RuntimeException('Native stock movement reason is not configured for this change.'); }
+        $actor=\Context::getContext()->employee;
+        $movement=new \StockMvt();$movement->id_stock=$stock;$movement->id_stock_mvt_reason=$reason;
+        $movement->id_employee=(int)$actor->id;$movement->employee_firstname=$actor->firstname;$movement->employee_lastname=$actor->lastname;
+        $movement->physical_quantity=abs($delta);$movement->sign=$delta>0?1:-1;
+        $movement->price_te=0;$movement->date_add=date('Y-m-d H:i:s');
+        if (!$movement->add()) { throw new \RuntimeException('Native stock movement could not be saved.'); }
+    }
+    private function withStockActor(callable $write): void
+    {
         // PrestaShop's stock ledger requires a non-null employee ID even in CLI/webhook
         // requests. Its StockManager ignores employee parameters and reads Context.
         // An unsaved ID-0 system actor records attribution without impersonating staff.
         $context=\Context::getContext(); $previousEmployee=$context->employee;
         if (!$previousEmployee || !(int)$previousEmployee->id) {
             $systemActor=new \Employee(); $systemActor->id=0;
-            $systemActor->firstname='WD29'; $systemActor->lastname='Bridge';
+            $systemActor->firstname='Inklura'; $systemActor->lastname='Bridge';
             $context->employee=$systemActor;
         }
-        try { \StockAvailable::updateQuantity($pid, $aid, $delta, $this->shop(), true); }
+        try { $write(); }
         finally { $context->employee=$previousEmployee; }
     }
     public function stockQuantity(array $map): ?int
@@ -566,7 +607,13 @@ final class PrestaAdapter
     {
         $aid = $map['kind'] === 'variant' ? (int) $map['local_id'] : 0;
         $pid = $aid ? (int) (new \Combination($aid))->id_product : (int) $map['local_id'];
-        if ($quantity !== null) { \StockAvailable::setQuantity($pid, $aid, $quantity, $this->shop(), false); }
+        if ($quantity !== null) {
+            $this->withStockActor(function () use ($pid,$aid,$quantity) {
+                $before=(int)\StockAvailable::getQuantityAvailableByProduct($pid,$aid,$this->shop());
+                if (\StockAvailable::setQuantity($pid,$aid,$quantity,$this->shop(),false)===false) { throw new \RuntimeException('Native stock update failed.'); }
+                $this->stockMovement($pid,$aid,$quantity-$before);
+            });
+        }
     }
     private function address(int $id, string $email): array
     {
@@ -596,7 +643,7 @@ final class PrestaAdapter
         $d=['first_name'=>'','last_name'=>'','email'=>'','phone'=>'','company'=>'','billing'=>[],'shipping'=>[],'guest'=>false,'deleted'=>false];
         $c=new \Customer($id);
         if (!\Validate::isLoadedObject($c) || $c->deleted) { $d['deleted']=true; return $d; }
-        $d['first_name']=$c->firstname; $d['last_name']=$c->lastname; $d['email']=$c->email; $d['company']=(string)$c->company; $d['guest']=(bool)$c->is_guest;
+        $d['active']=(bool)$c->active; $d['first_name']=$c->firstname; $d['last_name']=$c->lastname; $d['email']=$c->email; $d['company']=(string)$c->company; $d['guest']=(bool)$c->is_guest;
         $orders=$this->sql('SELECT id_address_invoice,id_address_delivery FROM `'._DB_PREFIX_."orders` WHERE id_customer=? AND module<>'wd29woobridge' ORDER BY id_order DESC LIMIT 1",[$id]);
         $addresses=$c->getAddresses($this->lang()); $d['addresses']=[];
         foreach ($addresses as $address) { $d['addresses'][]=['id'=>(string)$address['id_address'],'label'=>(string)$address['alias']]+$this->address((int)$address['id_address'],$c->email); }
@@ -607,12 +654,14 @@ final class PrestaAdapter
         return $d;
     }
 
+    public function disableCustomerAccount(string $key): void { CustomerAccounts::disable($this->engine,$key); }
+
     public function applyCustomerAccount(array $data): int { return CustomerAccounts::apply($this->engine,$data); }
 
     public function orderContact(int $id): ?string
     {
         $o=new \Order($id); if (!\Validate::isLoadedObject($o) || $o->module==='wd29woobridge' || !$o->id_customer) { return null; }
-        return Protocol::key('ps','customer',(int)$o->id_customer);
+        return OrderCustomers::source($this->engine,(int)$o->id_customer)??Protocol::key('ps','customer',(int)$o->id_customer);
     }
 
     public function reconcileOrderLinks(int $id): void
@@ -669,6 +718,7 @@ final class PrestaAdapter
                 'net' => $row['total_price_tax_excl'], 'tax' => (string) ((float) $row['total_price_tax_incl'] - (float) $row['total_price_tax_excl'])];
         }
         $data = ['key' => $this->engine->identity('order', $id), 'number' => (string) $o->reference, 'status' => $status,
+            'customer_key'=>OrderCustomers::source($this->engine,(int)$o->id_customer),
             'currency' => (new \Currency((int) $o->id_currency))->iso_code, 'total' => (string) $o->total_paid_tax_incl,
             'tax' => (string) ($o->total_paid_tax_incl - $o->total_paid_tax_excl), 'shipping_net' => (string) $o->total_shipping_tax_excl,
             'shipping_tax' => (string) ($o->total_shipping_tax_incl - $o->total_shipping_tax_excl), 'discount' => (string) $o->total_discounts_tax_excl,
@@ -685,9 +735,9 @@ final class PrestaAdapter
         if (strpos($data['key'],'woo:order:')!==0) { return $data; }
         $map=$this->engine->mapping($data['key']);
         $snapshot=json_decode($map['snapshot']??'',true);
-        if (!is_array($snapshot) || ($snapshot['key']??'')!==$data['key'] || !is_array($snapshot['items']??null)) { throw new \RuntimeException('Mirror snapshot missing; explicit order review required.'); }
+        if (!is_array($snapshot) || ($snapshot['key']??'')!==$data['key'] || !is_array($snapshot['items']??null)) { throw new NativeOrderReview('Mirror snapshot missing; explicit order review required.'); }
         $o=new \Order($id); $currency=new \Currency((int)$o->id_currency);
-        if ($o->module!=='wd29woobridge' || $currency->iso_code!==$snapshot['currency'] || (float)$o->total_paid_real!=0 || $o->valid || $o->invoice_number || Refunds::export($o)) { throw new \RuntimeException('Native mirror currency/payment/refund changed; explicit order review required.'); }
+        if ($o->module!=='wd29woobridge' || $currency->iso_code!==$snapshot['currency'] || (float)$o->total_paid_real!=0 || $o->valid || $o->invoice_number || Refunds::export($o)) { throw new NativeOrderReview('Native mirror currency/payment/refund changed; explicit order review required.'); }
         $decimals=(int)($currency->precision??2);
         foreach (['total_paid_tax_incl'=>'total','total_shipping_tax_excl'=>'shipping_net'] as $native=>$field) { OrderConflicts::assertMoney($o->$native,$snapshot[$field]??null,$decimals); }
         OrderConflicts::assertMoney($o->total_paid_tax_incl-$o->total_paid_tax_excl,$snapshot['tax'],$decimals);
@@ -695,22 +745,23 @@ final class PrestaAdapter
         // Mirror lines already include Woo discounts; native PS discounts are intentionally zero.
         foreach (['total_discounts','total_discounts_tax_incl','total_discounts_tax_excl'] as $field) { OrderConflicts::assertMoney($o->$field,0,$decimals); }
         $customer=new \Customer((int)$o->id_customer);
+        if (!empty($snapshot['customer_key']) && !$customer->is_guest && OrderCustomers::source($this->engine,(int)$o->id_customer)!==$snapshot['customer_key']) { throw new NativeOrderReview('Native mirror customer identity changed; explicit review required.'); }
         self::assertNativeAddress($this->address((int)$o->id_address_invoice,$customer->email),$snapshot['billing']);
         $expectedShipping=empty($snapshot['shipping']['address_1'])?$snapshot['billing']:$snapshot['shipping'];
         // PS guest mirrors use one customer's email for both stored addresses.
         $expectedShipping['email']=$snapshot['billing']['email']??'';
         self::assertNativeAddress($this->address((int)$o->id_address_delivery,$customer->email),$expectedShipping);
         $items=$o->getOrderDetailList();
-        if (count($items)!==count($snapshot['items'])) { throw new \RuntimeException('Native mirror line count changed; explicit order review required.'); }
+        if (count($items)!==count($snapshot['items'])) { throw new NativeOrderReview('Native mirror line count changed; explicit order review required.'); }
         $lineMap=[];
         foreach ($this->engine->sql('SELECT line_key,native_id FROM {b}order_lines WHERE order_key=?',[$data['key']]) as $entry) { $lineMap[$entry['line_key']]=(int)$entry['native_id']; }
         $sumNet=0.0; $sumGross=0.0;
         foreach ($snapshot['items'] as $index=>$line) {
             $item=$items[$index]; $lineKey=isset($line['line_id'])?'source:'.$line['line_id']:'legacy:'.$index;
-            if (($lineMap && (!isset($lineMap[$lineKey]) || $lineMap[$lineKey]!== (int)$item['id_order_detail'])) || $item['product_name']!==$line['name'] || (int)$item['product_quantity']!==(int)$line['quantity']) { throw new \RuntimeException('Native mirror line identity or quantity changed; explicit order review required.'); }
+            if (($lineMap && (!isset($lineMap[$lineKey]) || $lineMap[$lineKey]!== (int)$item['id_order_detail'])) || $item['product_name']!==$line['name'] || (int)$item['product_quantity']!==(int)$line['quantity']) { throw new NativeOrderReview('Native mirror line identity or quantity changed; explicit order review required.'); }
             $actualProduct=(int)($item['product_attribute_id']?:$item['product_id']);
             $productMap=!empty($line['product'])?$this->engine->mapping($line['product']):null;
-            if (($line['product']!==null && (!$productMap || $actualProduct!==(int)$productMap['local_id'])) || ($line['product']===null && $actualProduct!==0)) { throw new \RuntimeException('Native mirror product link changed; explicit order review required.'); }
+            if (($line['product']!==null && (!$productMap || $actualProduct!==(int)$productMap['local_id'])) || ($line['product']===null && $actualProduct!==0)) { throw new NativeOrderReview('Native mirror product link changed; explicit order review required.'); }
             OrderConflicts::assertMoney($item['total_price_tax_excl'],$line['net'],$decimals);
             OrderConflicts::assertMoney($item['total_price_tax_incl']-$item['total_price_tax_excl'],$line['tax'],$decimals);
             $sumNet+=(float)$line['net']; $sumGross+=(float)$line['net']+(float)$line['tax'];
@@ -742,6 +793,7 @@ final class PrestaAdapter
             }
             return (int) $o->id;
         }
+        if ($map) { $this->orderConflictSnapshot((int)$map['local_id']); }
         $stateId = (int) ($config['mirror_states'][$data['status']] ?? 0);
         if (!$stateId) { throw new \RuntimeException('No mirrored order-status mapping.'); }
         $state = new \OrderState($stateId);
@@ -759,11 +811,15 @@ final class PrestaAdapter
             if (empty($billing['first_name']) || empty($billing['last_name']) || !\Validate::isEmail($billing['email'] ?? '')) {
                 throw new \RuntimeException('Complete source billing identity is required.');
             }
-            $customer = new \Customer(); $customer->firstname = $billing['first_name']; $customer->lastname = $billing['last_name'];
+            $registered=OrderCustomers::resolve($this->engine,$data['customer_key']??null);
+            $customer = $registered?new \Customer($registered):new \Customer();
+            if (!$registered) {
+            $customer->firstname = $billing['first_name']; $customer->lastname = $billing['last_name'];
             $customer->email = $billing['email']; $customer->is_guest = true; $customer->active = true;
             $customer->passwd = \Tools::hash(bin2hex(random_bytes(32)));
             $customer->id_default_group = (int) \Configuration::get('PS_GUEST_GROUP');
             if (!$customer->add()) { throw new \RuntimeException('Guest customer could not be recorded.'); }
+            }
             $makeAddress = function (array $row) use ($customer) {
                 $row=self::nativeAddress($row);
                 $a = new \Address(); $a->id_customer = (int) $customer->id; $a->alias = 'Source order';
@@ -791,6 +847,13 @@ final class PrestaAdapter
             $o->total_paid_real = 0; $o->valid = false; $o->round_mode = (int) \Configuration::get('PS_PRICE_ROUND_MODE');
             $o->round_type = (int) \Configuration::get('PS_ROUND_TYPE');
             $o->note = 'Mirror of ' . $data['key'] . '; payment and invoice remain on source store.';
+        }
+        $registered=OrderCustomers::resolve($this->engine,$data['customer_key']??null);
+        if ($registered && (int)$o->id_customer!==$registered) {
+            $previousCustomer=new \Customer((int)$o->id_customer);
+            $targetCustomer=new \Customer($registered);
+            if (!$previousCustomer->is_guest || strcasecmp((string)$targetCustomer->email,(string)($data['billing']['email']??''))!==0) { throw new \RuntimeException('Native order customer changed; identity review required.'); }
+            $o->id_customer=$registered;$o->secure_key=$targetCustomer->secure_key;
         }
         $o->current_state = $stateId;
         $o->total_paid = $o->total_paid_tax_incl = (float) $data['total'];

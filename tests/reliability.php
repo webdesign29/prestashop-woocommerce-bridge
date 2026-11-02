@@ -1,11 +1,13 @@
 <?php
 /** Disposable real-MySQL queue/transaction tests, independent from both native platform fixtures. */
 require __DIR__.'/../includes/Protocol.php';
+require __DIR__.'/../includes/Licence.php';
 require __DIR__.'/../includes/Engine.php';
 use WD29\Bridge\Engine;
 final class ReliabilityAdapter {
-    public $db; public $state=[]; public $broken=false; public $capturesBroken=false; public $engine;
+    public $db; public $licence=[]; public $state=[]; public $broken=false; public $capturesBroken=false; public $engine;
     public function __construct() { $this->db=new PDO('mysql:unix_socket=/tmp/wd29-bridge-tests/mysql.sock;dbname=wd29unit','root','',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]); }
+    public function licenceState($state=null){if($state!==null){$this->licence=$state;}return $this->licence;}
     public function prefix(){return 'reliability_';} public function site(){return 'woo';}
     public function config(){return ['mode'=>'live','conflict_policy'=>'woo'];}
     public function sql($query,$args=[]){$stmt=$this->db->prepare($query);$stmt->execute($args);return preg_match('/^\s*SELECT/i',$query)?$stmt->fetchAll(PDO::FETCH_ASSOC):$stmt->rowCount();}

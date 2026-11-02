@@ -2,6 +2,15 @@
 namespace WD29\Bridge;
 final class CustomerAccounts
 {
+    public static function disable(Engine $engine,string $key): void
+    {
+        if (!preg_match('/^woo:customer:[1-9][0-9]*$/D',$key)) { throw new \RuntimeException('Invalid customer origin.'); }
+        $rows=$engine->sql('SELECT native_id FROM {b}account_links WHERE record_key=? LIMIT 2',[$key]);
+        if (!$rows) { return; }
+        $customer=new \Customer((int)$rows[0]['native_id']);
+        if (count($rows)!==1 || !\Validate::isLoadedObject($customer) || $customer->is_guest || $customer->deleted) { throw new \RuntimeException('Native customer identity changed; account status review required.'); }
+        $customer->active=false;if (!$customer->save()) { throw new \RuntimeException('Native customer could not be disabled.'); }
+    }
     public static function apply(Engine $engine,array $data): int
     {
         if (!preg_match('/^woo:customer:[1-9][0-9]*$/D',$data['key']) || !empty($data['guest']) || !empty($data['deleted'])) { throw new \RuntimeException('Only active registered source customers can create accounts.'); }
@@ -17,6 +26,7 @@ final class CustomerAccounts
             $customer->newsletter=false; $customer->optin=false; $customer->id_default_group=(int)\Configuration::get('PS_CUSTOMER_GROUP');
             $customer->id_shop=(int)\Context::getContext()->shop->id; $customer->id_shop_group=(int)\Context::getContext()->shop->id_shop_group;
         }
+        if (array_key_exists('active',$data)) { $customer->active=$data['active']; }
         $customer->firstname=$data['first_name']; $customer->lastname=$data['last_name']; $customer->email=$email;
         $customer->company=$data['company'];
         if (!$customer->save()) { throw new \RuntimeException('Native customer account could not be saved.'); }

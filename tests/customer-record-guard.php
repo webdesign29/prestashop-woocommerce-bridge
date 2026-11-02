@@ -76,5 +76,6 @@ foreach(['billing','shipping'] as $kind){
 resetFixture();$old=$baseline;$old['billing']=['city'=>'Incomplete'];$adapter->db->prepare('UPDATE fixture_wd29_bridge_contacts SET data=?')->execute([json_encode($old)]);$GLOBALS['addresses'][11]['firstname']='Local name';$incoming=$baseline;$incoming['first_name']='Changed source name';inspect('conflict','native_address_changed',$incoming);
 resetFixture();$incoming=$baseline;$incoming['key']='woo:customer:999';inspect('conflict','incoming_contact_invalid',$incoming);
 
+resetFixture();$data=$baseline;$data['active']=true;$GLOBALS['native']['active']=true;$adapter->db->prepare('UPDATE fixture_wd29_bridge_contacts SET data=?')->execute([json_encode($data)]);inspect('linked');$GLOBALS['native']['active']=false;inspect('conflict','native_account_status_changed');$data['active']=false;$adapter->db->prepare('UPDATE fixture_wd29_bridge_contacts SET data=?')->execute([json_encode($data)]);inspect('linked');
 echo 'PASS: '.$count." native customer guard assertions; read-only, bounded, no personal data or real emails\n";
 }

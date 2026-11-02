@@ -1,3 +1,47 @@
+## 0.8.13 — 2026-11-02
+
+- English-default WooCommerce administration with French translations.
+- Clarify display limits separately from Marketplace catalogue capacity.
+- Coordinated companion version; PrestaShop runtime is unchanged.
+
+## 0.8.12
+
+- Publication directe coordonnée avec WooCommerce0.8.12. Conserve les protections de stock, les comptes clients, les preuves signées Commerce Pro et les migrations existantes.
+- Shopify se configure dans le connecteur WooCommerce ; ce module reste le partenaire PrestaShop.
+
+## 0.7.11
+
+- Transport signé des opérations Commerce Pro et des preuves de commande d’origine.
+- Le worker terminé libère la protection financière avant de réveiller son partenaire ; les requêtes de paiement et de caisse la conservent.
+- Les disponibilités du compte tiennent compte des réservations et utilisations WooCommerce détenues dans le registre natif.
+
+## 0.7.10
+
+- Les clients inscrits d’origine PrestaShop restent dans les captures et comparaisons après un achat WooCommerce ; seuls les invités créés pour un miroir et les comptes importés sont exclus.
+- Régression exécutant les requêtes de l’adaptateur réel : clients inscrits, désactivés, supprimés, invités, comptes liés, achats natifs/miroirs et pagination.
+
+## 0.7.9
+
+- Les métadonnées natives anglaises et françaises de l’archive portent la version courante, même si PrestaShop a généré un ancien cache XML durant la requête d’import.
+- Les archives utilisent la date du commit de publication (ou `SOURCE_DATE_EPOCH`) ; la mise à niveau PrestaShop invalide explicitement l’OPcache des fichiers du module afin de ne pas conserver d’anciens fichiers inclus après import.
+- La protection des modifications locales du compte client s’applique aussi aux échanges automatiques : une identité, un rôle ou un profil local modifié reste en conflit pour examen.
+- Les désactivations et réactivations de comptes sont transmises ; une désactivation PrestaShop bloque également les authentifications WooCommerce du compte importé, sans changer son mot de passe ni son identité historique.
+- Les commandes conservent l’identité canonique du client inscrit et utilisent son compte natif lié ; les clients copiés ne deviennent pas de nouvelles identités sur l’autre boutique. Les contacts d’origine sont capturés avant leurs commandes.
+- Un changement natif du miroir met l’échange de commande en conflit visible, sans répéter des tentatives qui ne peuvent pas résoudre une décision comptable.
+- Une mise à jour de commande vérifie les données natives du miroir avant de remplacer son instantané. Les changements d’identité et de données financières nécessitent un examen.
+- Lecture authentifiée des points et des règles du compte depuis le registre KerAwen installé, sans créer de second solde dépensable.
+
+## 0.7.6
+
+- Réutilisation de la règle de promotion native de portée identique lorsque l’identifiant conservé est absent ou périmé ; les autres clients, boutiques, quantités, dates et règles de catalogue restent inchangés. Une règle liée dont la portée a changé est bloquée pour examen.
+- Les initialisations et changements absolus de quantité créent aussi un mouvement de stock natif, avec attribution système pour les requêtes sans employé. Les variations de quantité conservent leurs mouvements ; les valeurs identiques et inconnues n’en inventent pas.
+- Régressions de l’adaptateur réel : promotion native préexistante, mise à jour, retrait, rejeu, portée modifiée et mouvements de stock.
+
+## 0.7.5
+
+- Un import de catalogue accepté remplace aussi les anciens instantanés sortants de la même fiche, afin qu’un ancien prix ne reparte pas après une reprise fiscale ou une décision de priorité. Les événements de stock, commandes et autres produits restent conservés.
+- Import et capture de produit partagent le verrou de capture. Régressions dans les deux sens : priorité distante/locale, conflit à examiner, échec natif, doublon et rejeu.
+
 ## 0.7.4
 
 - WooCommerce : la reprise des échanges fiscaux conserve le résultat natif de la base de données. Une suppression de taux de TVA ne renvoie plus une fausse erreur HTTP 500 quand la file de reprise ne modifie aucune ligne. Les erreurs du connecteur ne font pas échouer les opérations fiscales natives.
