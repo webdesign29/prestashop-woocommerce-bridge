@@ -31,4 +31,4 @@ foreach([false,true] as $legacy){
 echo "PASS: single-record scan budget, 20-row comparison compatibility, bounded cursors, filtered originals and old-peer fallback\n";
 
 // Included in the existing CI process checks; no workflow permissions required.
-require __DIR__.'/concurrent-products.php';
+require __DIR__.'/catalog-priority.php';

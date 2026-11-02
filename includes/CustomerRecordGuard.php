@@ -1,6 +1,8 @@
 <?php
 namespace WD29\Bridge;
 
+class NativeCustomerReview extends \RuntimeException {}
+
 /** Read-only protection for the optional native customer copy. Never returns PII. */
 final class CustomerRecordGuard
 {
@@ -26,7 +28,11 @@ final class CustomerRecordGuard
             if ((int)$customer->id_shop!==(int)$shop->id || (int)$customer->id_shop_group!==(int)$shop->id_shop_group) { return array_merge($result,['reason'=>'native_account_shop_changed']); }
             $rows=$engine->sql('SELECT data FROM {b}contacts WHERE record_key=? LIMIT 2',[$key]);
             $data=count($rows)===1?json_decode($rows[0]['data'],true):null;
+            if (is_array($data) && ($data['key']??'')===$key && !empty($data['deleted'])) {
+                return array_merge($result,["state"=>(!$customer->active)?'linked':'conflict',"reason"=>(!$customer->active)?'deleted_source_account_disabled':'deleted_source_account_active']);
+            }
             if (!is_array($data) || ($data['key']??'')!==$key || !empty($data['guest']) || !empty($data['deleted']) || !is_array($data['billing']??null) || !is_array($data['shipping']??null)) { return array_merge($result,['reason'=>'contact_baseline_missing']); }
+            if (array_key_exists('active',$data) && (bool)$data['active']!==((bool)$customer->active)) { return array_merge($result,['reason'=>'native_account_status_changed']); }
             if ($incoming!==null && (($incoming['key']??'')!==$key || !is_array($incoming['billing']??null) || !is_array($incoming['shipping']??null))) { return array_merge($result,['reason'=>'incoming_contact_invalid']); }
             foreach (['first_name'=>'firstname','last_name'=>'lastname','email'=>'email','company'=>'company'] as $source=>$native) {
                 if (!is_string($data[$source]??null) || (string)$customer->$native!==$data[$source]) { return array_merge($result,['reason'=>'native_profile_changed']); }

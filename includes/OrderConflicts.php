@@ -1,6 +1,8 @@
 <?php
 namespace WD29\Bridge;
 
+class NativeOrderReview extends \RuntimeException {}
+
 /** Conservative wire-schema upgrade comparison. Never changes records or conflict policy. */
 final class OrderConflicts
 {
@@ -44,12 +46,12 @@ final class OrderConflicts
 
     public static function assertMoney($actual,$expected,int $decimals=2): void
     {
-        if (!is_numeric($actual) || !is_numeric($expected) || !is_finite((float)$actual) || !is_finite((float)$expected) || abs((float)$actual)>1000000000000 || abs((float)$expected)>1000000000000 || number_format((float)$actual,max(0,min(6,$decimals)),'.','')!==number_format((float)$expected,max(0,min(6,$decimals)),'.','')) { throw new \RuntimeException('Native mirror financial values differ from the synchronized snapshot; explicit review required.'); }
+        if (!is_numeric($actual) || !is_numeric($expected) || !is_finite((float)$actual) || !is_finite((float)$expected) || abs((float)$actual)>1000000000000 || abs((float)$expected)>1000000000000 || number_format((float)$actual,max(0,min(6,$decimals)),'.','')!==number_format((float)$expected,max(0,min(6,$decimals)),'.','')) { throw new NativeOrderReview('Native mirror financial values differ from the synchronized snapshot; explicit review required.'); }
     }
     public static function assertAddress(array $actual,array $expected): void
     {
         foreach (array_unique(array_merge(array_keys($actual),array_keys($expected))) as $key) {
-            if ((string)($actual[$key]??'')!==(string)($expected[$key]??'')) { throw new \RuntimeException('Native mirror address differs from the synchronized snapshot; explicit review required.'); }
+            if ((string)($actual[$key]??'')!==(string)($expected[$key]??'')) { throw new NativeOrderReview('Native mirror address differs from the synchronized snapshot; explicit review required.'); }
         }
     }
 

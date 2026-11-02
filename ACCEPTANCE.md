@@ -1,3 +1,7 @@
+# Coordinated direct release0.8.12
+
+The core catalogue, customer/default-address, inventory and initial-photo Shopify exchanges have live demo acceptance recorded alongside isolated native tests. Commerce Pro0.7.5 supplies optional KerAwen financial workflows on its explicitly supported authority. The general Sync-only boundaries below do not describe the separate Commerce Pro implementation. Merchant payment-provider acceptance and Shopify real-order acceptance must be completed in the intended environment.
+
 # Acceptance checks and external prerequisites
 
 ## Verified locally

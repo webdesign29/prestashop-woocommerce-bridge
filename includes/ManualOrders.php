@@ -21,7 +21,7 @@ trait ManualOrders
 
     private function manualOrderFields(array $data): array
     {
-        $groups=['statut'=>['status'],'montants'=>['total','tax','shipping_net','shipping_tax','discount','currency'],'articles'=>['items'],'coordonnées'=>['billing','shipping'],'métadonnées'=>['custom_fields'],'remboursements'=>['refunds']];$result=[];
+        $groups=['client'=>['customer_key'],'statut'=>['status'],'montants'=>['total','tax','shipping_net','shipping_tax','discount','currency'],'articles'=>['items'],'coordonnées'=>['billing','shipping'],'métadonnées'=>['custom_fields'],'remboursements'=>['refunds']];$result=[];
         foreach($groups as $label=>$keys){$values=[];foreach($keys as $key){$values[$key]=$data[$key]??null;}$result[$label]=Protocol::fingerprint($values);}return $result;
     }
 

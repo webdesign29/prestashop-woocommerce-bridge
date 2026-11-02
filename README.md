@@ -2,7 +2,7 @@
 
 Synchronisation directe **WooCommerce ↔ PrestaShop** : catalogue, stocks, commandes et contacts clients, avec webhooks signés et file d’attente persistante.
 
-**Version : 0.6.2.** Ce dépôt contient le plugin PrestaShop ; installez également le [plugin partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
+**Version : 0.8.12.** Ce dépôt contient le plugin PrestaShop ; installez également le [plugin partenaire](https://github.com/webdesign29/woocommerce-prestashop-bridge).
 
 [Télécharger les archives](https://plugins.inklura.fr/compte) (licence requise) · [Guide d’installation](https://plugins.inklura.fr/docs/licence) · [Exploitation et planificateur](OPERATIONS.md) · [Tests et cas particuliers](ACCEPTANCE.md)
 
@@ -193,3 +193,7 @@ The Woo archive is `dist/woo-marketplace/inklura-sync.zip`, rooted at `inklura-s
 After extracting each Marketplace archive, run `php tests/marketplace-distribution.php /absolute/path/to/extracted/plugin`. In the Woo repository also run `php tests/marketplace-admin.php /absolute/path/to/inklura-sync` and `php tests/marketplace-bootstrap.php /absolute/path/to/inklura-sync/inklura-sync.php`. Run the existing direct-sale license, synchronization and admin regression checks too.
 
 The Woo build passed the native integration suite on WordPress 7.1.3 / WooCommerce 11.2.1 / PHP 8.3 using both legacy order storage and HPOS with compatibility synchronization disabled. HPOS compatibility is declared. The new Marketplace distribution requires WordPress 7.0+ and WooCommerce 11.2.1+; earlier combinations are not yet claimed. It does not customize the cart or checkout UI, so it does not declare a separate Cart/Checkout Blocks extension. Marketplace submission still requires English-default localization, managed QIT checks and Woo business/technical/UX approval. Existing French screens are explicitly disclosed.
+
+### KerAwen integration status
+
+Registered customer/order links and source account activation are synchronized. The optional Woo account view reads KerAwen points and account-bound vouchers directly. Coupon/cart-rule transfers, Woo checkout redemption, gift-card issuance, and loyalty earning/conversion for Woo orders are not yet implemented. See [KerAwen integration status](docs/KERAWEN-COMMERCE.md).

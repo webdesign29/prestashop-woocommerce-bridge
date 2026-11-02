@@ -1,7 +1,7 @@
 <?php
 /** GPL-2.0-or-later. */
 if (!defined('_PS_VERSION_')) { exit; }
-if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.7.4'); }
+if (!defined('WD29_WOOBRIDGE_VERSION')) { define('WD29_WOOBRIDGE_VERSION', '0.8.13'); }
 require_once __DIR__ . '/includes/Protocol.php';
 require_once __DIR__ . '/includes/Licence.php';
 require_once __DIR__ . '/includes/LicenceAdmin.php';
@@ -12,6 +12,8 @@ require_once __DIR__ . '/includes/ManualRecordsAdmin.php';
 require_once __DIR__ . '/includes/AdminDesign.php';
 require_once __DIR__ . '/includes/OrderConflicts.php';
 require_once __DIR__ . '/includes/CustomerAccounts.php';
+require_once __DIR__ . '/includes/OrderCustomers.php';
+require_once __DIR__ . '/includes/KerawenCommerce.php';
 require_once __DIR__ . '/includes/Refunds.php';
 require_once __DIR__ . '/includes/Suppliers.php';
 require_once __DIR__ . '/includes/Gallery.php';
@@ -30,7 +32,7 @@ class Wd29woobridge extends Module
 
     public function __construct()
     {
-        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.7.4';
+        $this->name = 'wd29woobridge'; $this->tab = 'administration'; $this->version = '0.8.13';
         $this->author = 'Inklura'; $this->need_instance = 0; $this->bootstrap = true;
         $this->ps_versions_compliancy = ['min' => '8.2.0', 'max' => '9.1.99'];
         parent::__construct();

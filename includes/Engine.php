@@ -237,6 +237,13 @@ final class Engine
     {
         if (($message['source'] ?? '') !== ($this->adapter->site() === 'woo' ? 'ps' : 'woo')) { throw new \RuntimeException('Peer platform mismatch.'); }
         $op = $message['op'] ?? '';
+        if ($op==='commerce_finance') {
+            if (!\Module::isEnabled('inkluracommercepro')) { throw new \RuntimeException('Commerce Pro is not enabled.'); }
+            $commerce=\Module::getInstanceByName('inkluracommercepro');
+            if (!$commerce || !method_exists($commerce,'commerceReceive')) { throw new \RuntimeException('Commerce Pro is not available.'); }
+            return $commerce->commerceReceive($this,$message);
+        }
+        if (in_array($op,['commerce_account','commerce_catalog','commerce_order_link'],true)) { return KerawenCommerce::receive($this,$message); }
         if ($op === 'health') {
             return ['ok' => true, 'protocol' => Protocol::VERSION, 'platform' => $this->adapter->site(), 'mode' => $this->mode(), 'worker'=>$this->adapter->workerStatus(), 'diagnostics'=>$this->diagnostics()];
         }
@@ -287,8 +294,8 @@ final class Engine
         $ids = $this->adapter->ids($kind, $offset, 10);
         foreach ($ids as $id) {
             if ($kind==='order' && $this->mode()==='live') { $this->adapter->reconcileOrderLinks((int)$id); }
+            if ($kind==='order') { $key=$this->adapter->orderContact((int)$id); if ($key && strpos($key,$this->adapter->site().':')===0) { $this->capture('customer',$this->contactId($key)); } }
             $this->capture($kind, (int) $id);
-            if ($kind==='order') { $key=$this->adapter->orderContact((int)$id); if ($key) { $this->capture('customer',$this->contactId($key)); } }
         }
         return count($ids);
     }
@@ -341,8 +348,14 @@ final class Engine
             $this->sql('SELECT RELEASE_LOCK(?)', [$lock]);
         }
         if ($wakePeer) {
+            // The worker has finished all local transactions. A shared financial gate
+            // must let the peer deliver its records back; financial/POS requests never yield.
+            $gate='Inklura\\CommercePro\\PrestaAuthorityGate';
+            if (class_exists($gate,false) && $gate::held() && $gate::critical()) { return; }
+            $yielded=class_exists($gate,false)?$gate::yieldCompletedWorker():false;
             try { $this->peer(['op' => 'tick']); $this->resolveIssue('peer'); }
             catch (\Throwable $error) { $this->recordIssue('peer', 'peer_unreachable'); $this->adapter->notice($error->getMessage()); }
+            finally { if ($yielded) { $gate::boot(); } }
         }
     }
 
@@ -356,6 +369,16 @@ final class Engine
         $key = $event['record_key'];
         $kind = $event['kind'];
         $stockLock = null;
+        $catalogLock = null;
+        // Use the capture lock before opening a transaction so a concurrent native edit
+        // cannot be captured between accepting the winning import and retiring its loser.
+        if ($kind === 'product' && ($known = $this->mapping($key))) {
+            $catalogLock = 'wd29_capture_' . sha1($this->table . 'product:' . $known['local_id']);
+            if ((int) ($this->sql('SELECT GET_LOCK(?,5) AS acquired', [$catalogLock])[0]['acquired'] ?? 0) !== 1) {
+                $this->fail($event, new \RuntimeException('Record capture is busy.'));
+                return;
+            }
+        }
         $this->sql('START TRANSACTION');
         try {
             $payload = json_decode($event['payload'], true, 64, JSON_THROW_ON_ERROR);
@@ -437,6 +460,12 @@ final class Engine
                     $native = $kind === 'customer' ? $this->customer($id) : ($kind === 'product' ? $this->adapter->product($id) : $this->adapter->order($id));
                     $nativeHash = $kind === 'product' ? self::catalogHash($native) : Protocol::fingerprint($native);
                     $this->sql('UPDATE {b}map SET fingerprint=?,local_hash=? WHERE record_key=?', [$hash, $nativeHash, $key]);
+                    if ($kind === 'product') {
+                        // These snapshots describe the native version just replaced by the
+                        // accepted import. Sending one afterward would silently restore the
+                        // losing version on the peer. Retain history and all stock/order work.
+                        $this->sql("UPDATE {b}queue SET state='ignored',error='Superseded by accepted incoming catalog.' WHERE direction='out' AND kind='product' AND record_key=? AND state IN ('pending','failed','conflict')", [$key]);
+                    }
                 }
             }
             $this->sql("UPDATE {b}queue SET state='applied',error='' WHERE seq=?", [$event['seq']]);
@@ -448,6 +477,7 @@ final class Engine
         } finally {
             $this->catalogApplying = $this->orderApplying = $this->stockApplying = false;
             if ($stockLock !== null) { $this->sql('SELECT RELEASE_LOCK(?)', [$stockLock]); }
+            if ($catalogLock !== null) { $this->sql('SELECT RELEASE_LOCK(?)', [$catalogLock]); }
         }
     }
 
@@ -456,6 +486,10 @@ final class Engine
         $attempts = (int) $event['attempts'] + 1;
         // Error text contains no payload, request headers, secrets or customer data.
         $message = substr(preg_replace('/[\r\n]+/', ' ', $error->getMessage()), 0, 255);
+        if ((($event['kind']??'')==='order' && $error instanceof NativeOrderReview) || (($event['kind']??'')==='customer' && $error instanceof NativeCustomerReview)) {
+            $this->sql("UPDATE {b}queue SET state='conflict',next_try=0,error=? WHERE seq=?",[$message,$event['seq']]);
+            return;
+        }
         // A configuration decision cannot improve after eight rapid retries. Keep it visible and
         // retry hourly as a fallback; saving the relevant settings removes this delay immediately.
         if (isset(self::SETTING_ERRORS[$message])) {
@@ -526,7 +560,7 @@ final class Engine
                     if (($data['key']??'')===$event['record_key'] && ($payload['hash']??'')===Protocol::fingerprint($data) && $this->equivalentOrderAugmentation($data,$map)) { $row['resolution']='Equivalent technical upgrade; safe retry available'; }
                     else {
                         $different=[];
-                        foreach (['status','source_status','total','currency','items','shipping_net','shipping_tax','discount','tax','refunds','custom_fields'] as $field) {
+                        foreach (['customer_key','status','source_status','total','currency','items','shipping_net','shipping_tax','discount','tax','refunds','custom_fields'] as $field) {
                             if (json_encode($native[$field]??null)!==json_encode($data[$field]??null)) { $different[]=$field; }
                         }
                         $row['resolution']='Review differences: '.($different?implode(', ',$different):'other order details');
@@ -740,7 +774,7 @@ final class Engine
         }
         if (!is_array($data['billing']??null) || !is_array($data['shipping']??null)) { throw new \RuntimeException('Invalid contact address.'); }
         // Contact records contain no credentials, roles, payment tokens or marketing consents.
-        $clean=array_intersect_key($data,array_flip(['key','first_name','last_name','email','phone','company','billing','shipping','guest','deleted']));
+        $clean=array_intersect_key($data,array_flip(['key','first_name','last_name','email','phone','company','billing','shipping','guest','deleted','active']));
         $allowed=array_flip(['first_name','last_name','company','address_1','address_2','city','postcode','country','state','phone','email']);
         foreach (['billing','shipping'] as $field) {
             $clean[$field]=array_intersect_key($data[$field],$allowed);
@@ -756,6 +790,7 @@ final class Engine
                 $clean['addresses'][]=$entry;
             }
         }
+        if (array_key_exists('active',$data) && !is_bool($data['active'])) { throw new \RuntimeException('Invalid customer account status.'); }
         $clean['guest']=(bool)($data['guest']??false); $clean['deleted']=(bool)($data['deleted']??false);
         if (array_key_exists('custom_fields',$data)) {
             $fields=$data['custom_fields'];
@@ -782,9 +817,17 @@ final class Engine
     private function applyCustomer(array $data): int
     {
         if (strpos($data['key'],$this->adapter->site().':')===0) { throw new \RuntimeException('Contact details are edited on their originating store.'); }
-        $clean=$this->contactData($data); $id=$this->contactId($data['key']);
+        $clean=$this->contactData($data);
+        if (!empty($this->config()['native_customers'])) {
+            $guard=CustomerRecordGuard::inspect($this,$data['key'],$clean);
+            if ($guard['state']==='conflict' || (!empty($clean['guest']) && $guard['native_id'])) { throw new NativeCustomerReview('Native customer copy changed; identity/profile review required ('.$guard['reason'].').'); }
+        }
+        $id=$this->contactId($data['key']);
         $this->sql('UPDATE {b}contacts SET data=? WHERE id=?',[Protocol::encode($clean),$id]);
-        if (!empty($this->config()['native_customers']) && !$clean['guest'] && !$clean['deleted'] && method_exists($this->adapter,'applyCustomerAccount')) { $this->adapter->applyCustomerAccount($clean); }
+        if (!empty($this->config()['native_customers'])) {
+            if ($clean['deleted'] && method_exists($this->adapter,'disableCustomerAccount')) { $this->adapter->disableCustomerAccount($clean['key']); }
+            elseif (!$clean['guest'] && !$clean['deleted'] && method_exists($this->adapter,'applyCustomerAccount')) { $this->adapter->applyCustomerAccount($clean); }
+        }
         return $id;
     }
 
